@@ -105,7 +105,7 @@ class PEApp(App):
 
         self.ctx = Context(path, buf, pe)
 
-        self.title = f"pe: {self.ctx.path.as_posix()}"
+        self.title = f"pe: {self.ctx.path.name}"
 
     def compose(self) -> ComposeResult:
         yield Header()
