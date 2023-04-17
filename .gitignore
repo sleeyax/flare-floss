@@ -25,3 +25,4 @@ bin/
 venv
 flare_floss.egg-info
 .eggs
+.direnv
