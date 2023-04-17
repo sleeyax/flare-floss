@@ -96,29 +96,6 @@ class PEApp(App):
     """
 
     def __init__(self, path: pathlib.Path=None, buf: bytearray=None) -> None:
-
-        # textual dev constructs the app instance for us,
-        # which means we can't pass args in.
-        # so we parse them in here, by stealing argv.
-        if not path and not buf:
-            logger.info("you'd better be in dev mode!")
-
-            # expanduser because when passing quoted path to textual --dev, shell doesn't expand ~
-            path = pathlib.Path(sys.argv[1]).expanduser().resolve()
-
-            if not path.exists():
-                raise ValueError(f"{path} does not exist")
-
-            # TODO: leaking the file handle
-            f = path.open("rb")
-
-            WHOLE_FILE = 0
-            # TODO: leaking the mmap handle
-            mm = mmap.mmap(f.fileno(), length=WHOLE_FILE, access=mmap.ACCESS_READ)
-
-            # treat the mmap as a readable bytearray
-            buf: bytearray = mm  # type: ignore
-
         super().__init__()
 
         # premature optimization consideration:
