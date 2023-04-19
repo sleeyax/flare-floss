@@ -19,6 +19,7 @@ from textual import events
 from rich.text import Text
 from textual.logging import TextualHandler
 from textual.app import App, ComposeResult, RenderResult
+from textual.widget import Widget
 from textual.widgets import Header, Label, Static
 from textual.strip import Strip
 from textual.geometry import Size
@@ -82,6 +83,18 @@ class VirtualHexView(ScrollView):
     # TODO: make it easy to copy from
 
     def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
+        if length <= 0:
+            raise ValueError("length must be > 0")
+
+        if address < 0:
+            raise ValueError("address must be >= 0")
+
+        if address > len(ctx.buf):
+            raise ValueError("address must be <= len(ctx.buf)")
+
+        if address + length > len(ctx.buf):
+            raise ValueError("address + length must be <= len(ctx.buf)")
+
         super().__init__(*args, **kwargs)
         self.add_class("pe-pane")
         self.styles.height = "auto"
@@ -95,38 +108,82 @@ class VirtualHexView(ScrollView):
 
         DEFAULT_WIDTH = 76
 
-        self.row_count = self.length // 16
-        self.virtual_size = Size(width=DEFAULT_WIDTH, height=self.row_count + 4)
+        self.row_count = (self.length // 16) + 1
+
+        if self.has_aligned_start and self.length % 16 == 0:
+            self.row_count -= 1
+
+        self.virtual_size = Size(width=DEFAULT_WIDTH, height=self.row_count)
 
     def render(self) -> RenderResult:
-        buf = self.ctx.buf[self.address:self.address + self.length]
-
         rows: List[str] = []
 
         ROW_LENGTH = 0x10
 
-        if not self.has_aligned_start:
-            # number of bytes of padding at the start of the line 
+        aligned_length = self.length + (ROW_LENGTH - (self.length % ROW_LENGTH))
+
+        # row_offset is the aligned row offset into buf, which is a multiple of 16.
+        for i, row_offset in enumerate(range(0, aligned_length, ROW_LENGTH)):
+            if self.address == 0x3 and self.length == 0x10:
+                self.log(f"row: {i} offset: {row_offset} length: {self.length}")
+
+            if i == 0:
+                # number of bytes of padding at the start of the line 
+                # when the region start is unaligned.
+                padding_start_length = self.address % ROW_LENGTH
+
+                # number of bytes of data to display on this line.
+                row_data_length = min(ROW_LENGTH - padding_start_length, self.length)
+
+            else:
+                padding_start_length = 0
+
+                row_data_length = min(ROW_LENGTH, self.address + self.length - row_offset)
+
+                if self.address == 0x3 and self.length == 0x10:
+                    self.log(f"{padding_start_length} {row_data_length}")
+
+            # the offset in to the buf to find the bytes shown on this line.
+            row_data_offset = row_offset + padding_start_length
+
+            if self.address == 0x3 and self.length == 0x10:
+                self.log(f"{row_offset} {padding_start_length} {row_data_offset} {row_data_length}")
+
+            # number of bytes of padding at the end of the line
             # when the region start is unaligned.
-            padding_length = self.address % ROW_LENGTH
+            padding_end_length = ROW_LENGTH - row_data_length - padding_start_length
 
-            # the aligned row address, which is a multiple of 16
-            row_address = self.address - padding_length
+            # the bytes of data to show on this line.
+            row_buf = self.ctx.buf[row_data_offset:row_data_offset + row_data_length]
 
-            # the bytes of the row.
-            # the length of this is less than 16:
-            # padding_length + len(row_buf) == 16
-            row_buf = buf[0:self.address % ROW_LENGTH]
+            if self.address == 0x3 and self.length == 0x10:
+                self.log(f"{len(row_buf)}")
 
             row: List[str] = []
 
-            row.append(f"[blue]{row_address:08x}[/blue]:",)
+            # render address column.
+            # like:
+            #
+            #     0x00000000:
+            #     0x00000010:
+            row.append(f"[blue]{row_offset:08x}[/blue]:",)
             row.append("  ")
 
-            for _ in range(padding_length):
+            # render hex column.
+            # there may be padding at the start and/or end of line.
+            # like:
+            #
+            #                    FF 00 00 B8 00 00 00 00 00 00 00
+            #     04 00 00 00 FF FF 00 00 B8 00 00 00 00 00 00 00
+            #     04 00 00 00 FF FF 00 00 B8 00 00 00 
+            for _ in range(padding_start_length):
+                # width of a hex value is 2 characters.
                 row.append("  ")
+                # space-separate hex values.
                 row.append(" ")
 
+            # render hex value,
+            # bright when non-zero, muted when zero.
             for b in row_buf:
                 if b == 0x0:
                     row.append("[grey50]00[/grey50]")
@@ -135,7 +192,7 @@ class VirtualHexView(ScrollView):
 
                 row.append(" ")
 
-            for _ in range(ROW_LENGTH - len(row_buf) - padding_length):
+            for _ in range(ROW_LENGTH - len(row_buf) - padding_start_length):
                 row.append("  ")
                 row.append(" ")
 
@@ -146,71 +203,28 @@ class VirtualHexView(ScrollView):
             # separate the hex data from the ascii data
             row.append("  ")
 
-            for _ in range(padding_length):
+            # render ascii column.
+            # there may be padding at the start and/or end of line.
+            # like:
+            #
+            #          .....ABCD...
+            #      MZ.......ABCD...
+            #      MZ.......ABC    
+            for _ in range(padding_start_length):
+                # the width of an ascii value is one character,
+                # and these are not separated by spaces.
                 row.append(" ")
 
+            # render ascii value,
+            # bright when printable, muted when non-printable.
             for b in row_buf:
                 if 0x20 <= b <= 0x7E:
                     row.append(f"[white]{chr(b)}[/white]")
                 else:
                     row.append("[grey50].[/grey50]")
 
-            # when the end of the region is unaligned,
-            # pad the row with spaces.
-            for _ in range(ROW_LENGTH - len(row_buf) - padding_length):
+            for _ in range(padding_end_length):
                 row.append(" ")
-
-            # remove the trailing space thats usually used
-            # to separate each ascii byte value.
-            row.pop()
-
-            rows.append("".join(row))
-
-        for row_offset in range(0, self.length, ROW_LENGTH):
-            row_address = self.address + row_offset
-            row_buf = buf[row_offset:row_offset + ROW_LENGTH]
-
-            row: List[str] = []
-
-            row.append(f"[blue]{row_address:08x}[/blue]:",)
-            row.append("  ")
-
-            for b in row_buf:
-                if b == 0x0:
-                    row.append("[grey50]00[/grey50]")
-                else:
-                    row.append(f"[white]{b:02X}[/white]")
-
-                row.append(" ")
-
-            # when the end of the region is unaligned,
-            # pad the row with spaces.
-            for _ in range(ROW_LENGTH - len(row_buf)):
-                row.append("  ")
-                row.append(" ")
-
-            # remove the trailing space thats usually used
-            # to separate each hex byte value.
-            row.pop()
-
-            # separate the hex data from the ascii data
-            row.append("  ")
-
-            for b in row_buf:
-                if 0x20 <= b <= 0x7E:
-                    row.append(f"[white]{chr(b)}[/white]")
-                else:
-                    row.append("[grey50].[/grey50]")
-
-            # when the end of the region is unaligned,
-            # pad the row with spaces.
-            for _ in range(ROW_LENGTH - len(row_buf)):
-                row.append("  ")
-                row.append(" ")
-
-            # remove the trailing space thats usually used
-            # to separate each ascii byte value.
-            row.pop()
 
             rows.append("".join(row))
 
@@ -240,6 +254,51 @@ class VirtualHexView(ScrollView):
         strip = strip.crop(scroll_x, scroll_x + self.size.width)
         return strip
 
+
+class VirtualHexTestView(Widget):
+    def __init__(self, ctx: Context, *args, **kwargs):
+        super().__init__()
+        self.add_class("pe-pane")
+        self.styles.height = "auto"
+
+        self.ctx = ctx
+
+    def compose(self) -> ComposeResult:
+        yield Label("0, 4: single line, end padding")
+        yield VirtualHexView(self.ctx, 0x0, 0x4)
+
+        yield Label("0, 10: single line, aligned")
+        yield VirtualHexView(self.ctx, 0x0, 0x10)
+
+        yield Label("0, 18: two lines, end padding")
+        yield VirtualHexView(self.ctx, 0x0, 0x18)
+
+        yield Label("0, 20: two lines, aligned")
+        yield VirtualHexView(self.ctx, 0x0, 0x20)
+
+        yield Label("0, 28: three lines, end padding")
+        yield VirtualHexView(self.ctx, 0x0, 0x28)
+
+        yield Label("0, 30: three lines, aligned")
+        yield VirtualHexView(self.ctx, 0x0, 0x30)
+
+        yield Label("3, 4: one line, start padding, end padding")
+        yield VirtualHexView(self.ctx, 0x3, 0x4)
+
+        yield Label("3, D: one line, start padding")
+        yield VirtualHexView(self.ctx, 0x3, 0xD)
+
+        yield Label("3, 10: two lines, start padding, end padding")
+        yield VirtualHexView(self.ctx, 0x3, 0x10)
+
+        yield Label("3, 1D: two lines, start padding")
+        yield VirtualHexView(self.ctx, 0x3, 0x1D)
+
+        yield Label("3, 20: three lines, start padding, end padding")
+        yield VirtualHexView(self.ctx, 0x3, 0x20)
+
+        yield Label("3, 2D: three lines, start padding")
+        yield VirtualHexView(self.ctx, 0x3, 0x2D)
 
 
 # TODO: StructureView
@@ -287,10 +346,9 @@ class PEApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield MetadataView(self.ctx)
-        yield HexView(self.ctx, 0, 0x30)
-        yield VirtualHexView(self.ctx, 0x4, 0x8)
-        yield VirtualHexView(self.ctx, 0x4, 0x10)
-        yield VirtualHexView(self.ctx, 0x8, 0x28)
+
+        yield VirtualHexTestView(self.ctx)
+
 
     def on_mount(self) -> None:
         self.log("mounted")
