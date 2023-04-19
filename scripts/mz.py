@@ -13,10 +13,10 @@ from typing import Any, List, Tuple, Union, Optional
 from dataclasses import dataclass
 
 import pefile
-import hexdump
 import textwrap
 from textual import events
 from rich.text import Text
+from rich.segment import Segment
 from textual.logging import TextualHandler
 from textual.app import App, ComposeResult, RenderResult
 from textual.widget import Widget
@@ -24,10 +24,9 @@ from textual.widgets import Header, Label, Static
 from textual.strip import Strip
 from textual.geometry import Size
 from textual.scroll_view import ScrollView
-
-logger = logging.getLogger("pe")
-
 from textual.logging import TextualHandler
+
+logger = logging.getLogger("mz")
 
 
 @dataclass
@@ -56,28 +55,7 @@ class MetadataView(Static):
         """)
 
 
-class HexView(Static):
-    # TODO: coloring
-    # TODO: virtual scrolling
-    # TODO: offset/alignment
-    # TODO: label/title
-    # TODO: make this width the application global width?
-
-
-    def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
-        super().__init__(self.render_text(ctx, address, length), *args, **kwargs)
-        self.add_class("pe-pane")
-
-    @staticmethod
-    def render_text(ctx: Context, address: int, length: int) -> Text:
-        return w(hexdump.hexdump(ctx.buf[address:address + length], result="return"))
-
-    def get_content_width(self, container: Size, viewport: Size) -> int:
-        return 76  # default width of hexdump.hexdump
-
-
-class VirtualHexView(ScrollView):
-    # TODO: virtual scrolling
+class HexView(ScrollView):
     # TODO: label/title
     # TODO: make this width the application global width?
     # TODO: make it easy to copy from
@@ -85,41 +63,41 @@ class VirtualHexView(ScrollView):
     # refer directly to line api documentation here: 
     # https://textual.textualize.io/guide/widgets/#line-api
     COMPONENT_CLASSES = {
-        "virtualhexview--address",
-        "virtualhexview--padding",
-        "virtualhexview--hex-nonzero",
-        "virtualhexview--hex-zero",
-        "virtualhexview--ascii-printable",
-        "virtualhexview--ascii-nonprintable",
+        "hexview--address",
+        "hexview--padding",
+        "hexview--hex-nonzero",
+        "hexview--hex-zero",
+        "hexview--ascii-printable",
+        "hexview--ascii-nonprintable",
     }
 
     DEFAULT_CSS = """
-        VirtualHexView {
+        HexView {
             /* take up full height of hex view, unless specified otherwise */
             height: auto;
         }
 
-        VirtualHexView .virtualhexview--address {
+        HexView .hexview--address {
             color: $accent;
         }
 
-        VirtualHexView .virtualhexview--padding {
+        HexView .hexview--padding {
             /* nothing special, empty space */
         }
 
-        VirtualHexView .virtualhexview--hex-nonzero {
+        HexView .hexview--hex-nonzero {
             color: $text;
         }
 
-        VirtualHexView .virtualhexview--hex-zero {
+        HexView .hexview--hex-zero {
             color: $text-muted;
         }
 
-        VirtualHexView .virtualhexview--ascii-printable {
+        HexView .hexview--ascii-printable {
             color: $text;
         }
 
-        VirtualHexView .virtualhexview--ascii-nonprintable {
+        HexView .hexview--ascii-nonprintable {
             color: $text-muted;
         }
     """
@@ -159,19 +137,17 @@ class VirtualHexView(ScrollView):
 
         self.virtual_size = Size(width=DEFAULT_WIDTH, height=self.row_count)
 
-    def render(self) -> RenderResult:
-        rows: List[str] = []
+    def render_line(self, y: int) -> Strip:
+        scroll_x, scroll_y = self.scroll_offset
+        row_index = y + scroll_y
 
-        for i in range(self.row_count):
-            rows.append(self._render_line(i))
+        if row_index >= self.row_count:
+            return Strip.blank(self.size.width)
 
-        return "\n".join(rows)
-
-    def _render_line(self, i) -> str:
         # row_offset is the aligned row offset into buf, which is a multiple of 16.
-        row_offset = i * self.row_length 
+        row_offset = row_index * self.row_length 
 
-        if i == 0:
+        if row_index == 0:
             # number of bytes of padding at the start of the line 
             # when the region start is unaligned.
             padding_start_length = self.address % self.row_length 
@@ -194,7 +170,14 @@ class VirtualHexView(ScrollView):
         # the bytes of data to show on this line.
         row_buf = self.ctx.buf[row_data_offset:row_data_offset + row_data_length]
 
-        row: List[str] = []
+        segments: List[str] = []
+
+        style_address = self.get_component_rich_style("hexview--address")
+        style_padding = self.get_component_rich_style("hexview--padding")
+        style_hex_nonzero = self.get_component_rich_style("hexview--hex-nonzero")
+        style_hex_zero = self.get_component_rich_style("hexview--hex-zero")
+        style_ascii_printable = self.get_component_rich_style("hexview--ascii-printable")
+        style_ascii_nonprintable = self.get_component_rich_style("hexview--ascii-nonprintable")
 
         # render address column.
         # like:
@@ -203,8 +186,8 @@ class VirtualHexView(ScrollView):
         #     0x00000010:
         #
         # TODO: make this 8 bytes for x64
-        row.append(f"[blue]{row_offset:08x}[/blue]:",)
-        row.append("  ")
+        segments.append(Segment(f"{row_offset:08x}:", style_address))
+        segments.append(Segment("  ", style_padding))
 
         # render hex column.
         # there may be padding at the start and/or end of line.
@@ -215,30 +198,29 @@ class VirtualHexView(ScrollView):
         #     04 00 00 00 FF FF 00 00 B8 00 00 00 
         for _ in range(padding_start_length):
             # width of a hex value is 2 characters.
-            row.append("  ")
+            segments.append(Segment("  ", style_padding))
             # space-separate hex values.
-            row.append(" ")
+            segments.append(Segment(" ", style_padding))
 
         # render hex value,
         # bright when non-zero, muted when zero.
         for b in row_buf:
             if b == 0x0:
-                row.append("[grey50]00[/grey50]")
+                segments.append(Segment("00", style_hex_zero))
             else:
-                row.append(f"[white]{b:02X}[/white]")
-
-            row.append(" ")
+                segments.append(Segment(f"{b:02X}", style_hex_nonzero))
+            segments.append(Segment(" ", style_padding))
 
         for _ in range(padding_end_length):
-            row.append("  ")
-            row.append(" ")
+            segments.append(Segment("  ", style_padding))
+            segments.append(Segment(" ", style_padding))
 
         # remove the trailing space thats usually used
         # to separate each hex byte value.
-        row.pop()
+        segments.pop()
 
         # separate the hex data from the ascii data
-        row.append("  ")
+        segments.append(Segment("  ", style_padding))
 
         # render ascii column.
         # there may be padding at the start and/or end of line.
@@ -250,53 +232,31 @@ class VirtualHexView(ScrollView):
         for _ in range(padding_start_length):
             # the width of an ascii value is one character,
             # and these are not separated by spaces.
-            row.append(" ")
+            segments.append(Segment(" ", style_padding))
 
         # render ascii value,
         # bright when printable, muted when non-printable.
         for b in row_buf:
             if 0x20 <= b <= 0x7E:
-                row.append(f"[white]{chr(b)}[/white]")
+                segments.append(Segment(chr(b), style_ascii_printable))
             else:
-                row.append("[grey50].[/grey50]")
+                segments.append(Segment(".", style_ascii_nonprintable))
 
         for _ in range(padding_end_length):
-            row.append(" ")
+            segments.append(Segment(" ", style_padding))
 
-        return "".join(row)
-
-    def _render_line_(self, y: int) -> Strip:
-        """Render a line of the widget. y is relative to the top of the widget."""
-
-        scroll_x, scroll_y = self.scroll_offset  # The current scroll position
-        y += scroll_y  # The line at the top of the widget is now `scroll_y`, not zero!
-        row_index = y // 4  # four lines per row
-
-        white = self.get_component_rich_style("checkerboard--white-square")
-        black = self.get_component_rich_style("checkerboard--black-square")
-
-        if row_index >= self.board_size:
-            return Strip.blank(self.size.width)
-
-        is_odd = row_index % 2
-
-        segments = [
-            Segment(" " * 8, black if (column + is_odd) % 2 else white)
-            for column in range(self.board_size)
-        ]
-        strip = Strip(segments, self.board_size * 8)
-        # Crop the strip so that is covers the visible area
+        strip = Strip(segments)
         strip = strip.crop(scroll_x, scroll_x + self.size.width)
         return strip
 
 
-class VirtualHexTestView(Widget):
+class HexTestView(Widget):
     DEFAULT_CSS = """
-        VirtualHexTestView > Label {
+        HexTestView > Label {
             padding-top: 1;
         }
 
-        VirtualHexTestView > VirtualHexView.tall {
+        HexTestView > HexView.tall {
             height: 6;  /* margin-top: 1 + four lines of content + margin-bottom: 1 */
         }
     """
@@ -309,61 +269,53 @@ class VirtualHexTestView(Widget):
         self.ctx = ctx
 
     def compose(self) -> ComposeResult:
-        yield Label("0, 100: tall, overflowing")
-        yield VirtualHexView(self.ctx, 0x0, 0x100, classes="tall")
-
         yield Label("0, 4: single line, end padding")
-        yield VirtualHexView(self.ctx, 0x0, 0x4)
+        yield HexView(self.ctx, 0x0, 0x4)
 
         yield Label("0, 10: single line, aligned")
-        yield VirtualHexView(self.ctx, 0x0, 0x10)
+        yield HexView(self.ctx, 0x0, 0x10)
 
         yield Label("0, 18: two lines, end padding")
-        yield VirtualHexView(self.ctx, 0x0, 0x18)
+        yield HexView(self.ctx, 0x0, 0x18)
 
         yield Label("0, 20: two lines, aligned")
-        yield VirtualHexView(self.ctx, 0x0, 0x20)
+        yield HexView(self.ctx, 0x0, 0x20)
 
         yield Label("0, 28: three lines, end padding")
-        yield VirtualHexView(self.ctx, 0x0, 0x28)
+        yield HexView(self.ctx, 0x0, 0x28)
 
         yield Label("0, 30: three lines, aligned")
-        yield VirtualHexView(self.ctx, 0x0, 0x30)
+        yield HexView(self.ctx, 0x0, 0x30)
 
         yield Label("3, 4: one line, start padding, end padding")
-        yield VirtualHexView(self.ctx, 0x3, 0x4)
+        yield HexView(self.ctx, 0x3, 0x4)
 
         yield Label("3, D: one line, start padding")
-        yield VirtualHexView(self.ctx, 0x3, 0xD)
+        yield HexView(self.ctx, 0x3, 0xD)
 
         yield Label("3, 10: two lines, start padding, end padding")
-        yield VirtualHexView(self.ctx, 0x3, 0x10)
+        yield HexView(self.ctx, 0x3, 0x10)
 
         yield Label("3, 1D: two lines, start padding")
-        yield VirtualHexView(self.ctx, 0x3, 0x1D)
+        yield HexView(self.ctx, 0x3, 0x1D)
 
         yield Label("3, 20: three lines, start padding, end padding")
-        yield VirtualHexView(self.ctx, 0x3, 0x20)
+        yield HexView(self.ctx, 0x3, 0x20)
 
         yield Label("3, 2D: three lines, start padding")
-        yield VirtualHexView(self.ctx, 0x3, 0x2D)
+        yield HexView(self.ctx, 0x3, 0x2D)
 
         yield Label("0, 4, 7: single line, end padding")
-        yield VirtualHexView(self.ctx, 0x0, 0x4, row_length=7)
+        yield HexView(self.ctx, 0x0, 0x4, row_length=7)
 
         yield Label("0, 7, 7: single line, aligned")
-        yield VirtualHexView(self.ctx, 0x0, 0x10, row_length=7)
+        yield HexView(self.ctx, 0x0, 0x10, row_length=7)
 
         yield Label("0, 13, 7: two lines, end padding")
-        yield VirtualHexView(self.ctx, 0x0, 0x18, row_length=7)
-
-        yield Label("0, 100: tall")
-        yield VirtualHexView(self.ctx, 0x0, 0x100)
+        yield HexView(self.ctx, 0x0, 0x18, row_length=7)
 
         yield Label("0, 100: tall, overflowing")
-        yield VirtualHexView(self.ctx, 0x0, 0x100, classes="tall")
-
-
+        yield HexView(self.ctx, 0x0, len(self.ctx.buf), classes="tall")
 
 
 # TODO: StructureView
@@ -412,7 +364,7 @@ class PEApp(App):
         yield Header()
         yield MetadataView(self.ctx)
 
-        yield VirtualHexTestView(self.ctx)
+        yield HexTestView(self.ctx)
 
 
     def on_mount(self) -> None:
