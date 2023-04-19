@@ -77,12 +77,11 @@ class HexView(Static):
 
 class VirtualHexView(ScrollView):
     # TODO: virtual scrolling
-    # TODO: offset/alignment
     # TODO: label/title
     # TODO: make this width the application global width?
     # TODO: make it easy to copy from
 
-    def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
+    def __init__(self, ctx: Context, address: int, length: int, row_length: int=0x10, *args, **kwargs):
         if length <= 0:
             raise ValueError("length must be > 0")
 
@@ -95,6 +94,9 @@ class VirtualHexView(ScrollView):
         if address + length > len(ctx.buf):
             raise ValueError("address + length must be <= len(ctx.buf)")
 
+        if row_length <= 0:
+            raise ValueError("row_length must be > 0")
+
         super().__init__(*args, **kwargs)
         self.add_class("pe-pane")
         self.styles.height = "auto"
@@ -102,15 +104,15 @@ class VirtualHexView(ScrollView):
         self.ctx = ctx
         self.address = address
         self.length = length
+        self.row_length = row_length
 
-        self.has_aligned_start = self.address % 16 == 0
-        self.has_aligned_end = (self.address + self.length) % 16 == 0
+        self.has_aligned_start = self.address % self.row_length == 0
+        self.has_aligned_end = (self.address + self.length) % self.row_length == 0
 
         DEFAULT_WIDTH = 76
 
-        self.row_count = (self.length // 16) + 1
-
-        if self.has_aligned_start and self.length % 16 == 0:
+        self.row_count = (self.length // self.row_length) + 1
+        if self.has_aligned_start and self.length % self.row_length == 0:
             self.row_count -= 1
 
         self.virtual_size = Size(width=DEFAULT_WIDTH, height=self.row_count)
@@ -118,46 +120,32 @@ class VirtualHexView(ScrollView):
     def render(self) -> RenderResult:
         rows: List[str] = []
 
-        ROW_LENGTH = 0x10
-
-        aligned_length = self.length + (ROW_LENGTH - (self.length % ROW_LENGTH))
-
-        # row_offset is the aligned row offset into buf, which is a multiple of 16.
-        for i, row_offset in enumerate(range(0, aligned_length, ROW_LENGTH)):
-            if self.address == 0x3 and self.length == 0x10:
-                self.log(f"row: {i} offset: {row_offset} length: {self.length}")
+        for i in range(self.row_count):
+            # row_offset is the aligned row offset into buf, which is a multiple of 16.
+            row_offset = i * self.row_length 
 
             if i == 0:
                 # number of bytes of padding at the start of the line 
                 # when the region start is unaligned.
-                padding_start_length = self.address % ROW_LENGTH
+                padding_start_length = self.address % self.row_length 
 
                 # number of bytes of data to display on this line.
-                row_data_length = min(ROW_LENGTH - padding_start_length, self.length)
+                row_data_length = min(self.row_length - padding_start_length, self.length)
 
             else:
                 padding_start_length = 0
 
-                row_data_length = min(ROW_LENGTH, self.address + self.length - row_offset)
-
-                if self.address == 0x3 and self.length == 0x10:
-                    self.log(f"{padding_start_length} {row_data_length}")
+                row_data_length = min(self.row_length, self.address + self.length - row_offset)
 
             # the offset in to the buf to find the bytes shown on this line.
             row_data_offset = row_offset + padding_start_length
 
-            if self.address == 0x3 and self.length == 0x10:
-                self.log(f"{row_offset} {padding_start_length} {row_data_offset} {row_data_length}")
-
             # number of bytes of padding at the end of the line
             # when the region start is unaligned.
-            padding_end_length = ROW_LENGTH - row_data_length - padding_start_length
+            padding_end_length = self.row_length - row_data_length - padding_start_length
 
             # the bytes of data to show on this line.
             row_buf = self.ctx.buf[row_data_offset:row_data_offset + row_data_length]
-
-            if self.address == 0x3 and self.length == 0x10:
-                self.log(f"{len(row_buf)}")
 
             row: List[str] = []
 
@@ -166,6 +154,8 @@ class VirtualHexView(ScrollView):
             #
             #     0x00000000:
             #     0x00000010:
+            #
+            # TODO: make this 8 bytes for x64
             row.append(f"[blue]{row_offset:08x}[/blue]:",)
             row.append("  ")
 
@@ -192,7 +182,7 @@ class VirtualHexView(ScrollView):
 
                 row.append(" ")
 
-            for _ in range(ROW_LENGTH - len(row_buf) - padding_start_length):
+            for _ in range(padding_end_length):
                 row.append("  ")
                 row.append(" ")
 
@@ -256,6 +246,12 @@ class VirtualHexView(ScrollView):
 
 
 class VirtualHexTestView(Widget):
+    DEFAULT_CSS = """
+        VirtualHexTestView > Label {
+            padding-top: 1;
+        }
+    """
+
     def __init__(self, ctx: Context, *args, **kwargs):
         super().__init__()
         self.add_class("pe-pane")
@@ -299,6 +295,17 @@ class VirtualHexTestView(Widget):
 
         yield Label("3, 2D: three lines, start padding")
         yield VirtualHexView(self.ctx, 0x3, 0x2D)
+
+        yield Label("0, 4, 7: single line, end padding")
+        yield VirtualHexView(self.ctx, 0x0, 0x4, row_length=7)
+
+        yield Label("0, 7, 7: single line, aligned")
+        yield VirtualHexView(self.ctx, 0x0, 0x10, row_length=7)
+
+        yield Label("0, 13, 7: two lines, end padding")
+        yield VirtualHexView(self.ctx, 0x0, 0x18, row_length=7)
+
+
 
 
 # TODO: StructureView
