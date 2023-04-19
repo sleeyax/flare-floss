@@ -5,26 +5,25 @@
 import os
 import sys
 import mmap
-import pathlib
 import asyncio
 import logging
+import pathlib
 import argparse
-from typing import Any, List, Tuple, Union, Optional
+import textwrap
+from typing import List
 from dataclasses import dataclass
 
 import pefile
-import textwrap
 from textual import events
 from rich.text import Text
+from textual.app import App, ComposeResult
 from rich.segment import Segment
-from textual.logging import TextualHandler
-from textual.app import App, ComposeResult, RenderResult
-from textual.widget import Widget
-from textual.widgets import Header, Label, Static
 from textual.strip import Strip
+from textual.widget import Widget
+from textual.logging import TextualHandler
+from textual.widgets import Label, Header, Static
 from textual.geometry import Size
 from textual.scroll_view import ScrollView
-from textual.logging import TextualHandler
 
 logger = logging.getLogger("mz")
 
@@ -36,8 +35,8 @@ class Context:
     pe: pefile.PE
 
 
-def w(s) -> str:
-    """ wrapper for multi-line text """
+def w(s: str) -> Text:
+    """wrapper for multi-line text"""
     return Text.from_markup(textwrap.dedent(s.lstrip("\n")).strip())
 
 
@@ -48,11 +47,13 @@ class MetadataView(Static):
 
     @staticmethod
     def render_text(ctx: Context) -> Text:
-        return w(f"""
+        return w(
+            f"""
             [yellow]metadata:[/yellow]
              [blue]name:[/blue] {ctx.path.name}
              [blue]size:[/blue] 0x{len(ctx.buf):x}
-        """)
+        """
+        )
 
 
 class HexView(ScrollView):
@@ -60,7 +61,7 @@ class HexView(ScrollView):
     # TODO: make this width the application global width?
     # TODO: make it easy to copy from
 
-    # refer directly to line api documentation here: 
+    # refer directly to line api documentation here:
     # https://textual.textualize.io/guide/widgets/#line-api
     COMPONENT_CLASSES = {
         "hexview--address",
@@ -102,7 +103,7 @@ class HexView(ScrollView):
         }
     """
 
-    def __init__(self, ctx: Context, address: int, length: int, row_length: int=0x10, *args, **kwargs):
+    def __init__(self, ctx: Context, address: int, length: int, row_length: int = 0x10, *args, **kwargs):
         if length <= 0:
             raise ValueError("length must be > 0")
 
@@ -145,12 +146,12 @@ class HexView(ScrollView):
             return Strip.blank(self.size.width)
 
         # row_offset is the aligned row offset into buf, which is a multiple of 16.
-        row_offset = row_index * self.row_length 
+        row_offset = row_index * self.row_length
 
         if row_index == 0:
-            # number of bytes of padding at the start of the line 
+            # number of bytes of padding at the start of the line
             # when the region start is unaligned.
-            padding_start_length = self.address % self.row_length 
+            padding_start_length = self.address % self.row_length
 
             # number of bytes of data to display on this line.
             row_data_length = min(self.row_length - padding_start_length, self.length)
@@ -168,9 +169,9 @@ class HexView(ScrollView):
         padding_end_length = self.row_length - row_data_length - padding_start_length
 
         # the bytes of data to show on this line.
-        row_buf = self.ctx.buf[row_data_offset:row_data_offset + row_data_length]
+        row_buf = self.ctx.buf[row_data_offset : row_data_offset + row_data_length]
 
-        segments: List[str] = []
+        segments: List[Segment] = []
 
         style_address = self.get_component_rich_style("hexview--address")
         style_padding = self.get_component_rich_style("hexview--padding")
@@ -195,7 +196,7 @@ class HexView(ScrollView):
         #
         #                    FF 00 00 B8 00 00 00 00 00 00 00
         #     04 00 00 00 FF FF 00 00 B8 00 00 00 00 00 00 00
-        #     04 00 00 00 FF FF 00 00 B8 00 00 00 
+        #     04 00 00 00 FF FF 00 00 B8 00 00 00
         for _ in range(padding_start_length):
             # width of a hex value is 2 characters.
             segments.append(Segment("  ", style_padding))
@@ -228,7 +229,7 @@ class HexView(ScrollView):
         #
         #          .....ABCD...
         #      MZ.......ABCD...
-        #      MZ.......ABC    
+        #      MZ.......ABC
         for _ in range(padding_start_length):
             # the width of an ascii value is one character,
             # and these are not separated by spaces.
@@ -322,7 +323,6 @@ class HexTestView(Widget):
 
 
 class PEApp(App):
-
     # TODO: how does the app layout when there are hundreds of hex views, each with thousands of lines?
 
     TITLE = "pe"
@@ -348,7 +348,7 @@ class PEApp(App):
         }
     """
 
-    def __init__(self, path: pathlib.Path=None, buf: bytearray=None) -> None:
+    def __init__(self, path: pathlib.Path, buf: bytearray) -> None:
         super().__init__()
 
         # premature optimization consideration:
@@ -365,7 +365,6 @@ class PEApp(App):
         yield MetadataView(self.ctx)
 
         yield HexTestView(self.ctx)
-
 
     def on_mount(self) -> None:
         self.log("mounted")
@@ -408,7 +407,6 @@ async def main(argv=None):
     with path.open("rb") as f:
         WHOLE_FILE = 0
         with mmap.mmap(f.fileno(), length=WHOLE_FILE, access=mmap.ACCESS_READ) as mm:
-
             # treat the mmap as a readable bytearray
             buf: bytearray = mm  # type: ignore
 
