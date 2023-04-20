@@ -47,20 +47,59 @@ def w(s: str) -> Text:
     return Text.from_markup(textwrap.dedent(s.lstrip("\n")).strip())
 
 
+class Line(Horizontal):
+    """A line of text. Children should be Static widgets."""
+
+    DEFAULT_CSS = """
+        Line {
+            /* ensure each line doesn't overflow to subsequent row */
+            height: 1;
+        }
+
+        Line > Static {
+            /* by default, the widget will expand to fill the available space */
+            width: auto;
+        }
+    """
+
+
 class MetadataView(Static):
+    DEFAULT_CSS = """
+        MetadataView .metadataview--title {
+            color: $secondary;
+        }
+
+        MetadataView .metadataview--key {
+            color: $accent;
+        }
+
+        MetadataView .metadataview--value {
+            color: $text;
+        }
+    """
+
     def __init__(self, ctx: Context, *args, **kwargs):
-        super().__init__(self.render_text(ctx), *args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.add_class("pe-pane")
 
-    @staticmethod
-    def render_text(ctx: Context) -> Text:
-        return w(
-            f"""
-            [yellow]metadata:[/yellow]
-             [blue]name:[/blue] {ctx.path.name}
-             [blue]size:[/blue] 0x{len(ctx.buf):x}
-        """
+        self.ctx = ctx
+
+    def compose(self) -> ComposeResult:
+        yield Label("metadata:", classes="metadataview--title")
+        yield Line(
+            Static(f"  name: ", classes="metadataview--key"),
+            Static(self.ctx.path.name, classes="metadataview--value"),
         )
+        yield Line(
+            Static(f"  size: ", classes="metadataview--key"),
+            Static(hex(len(self.ctx.buf)), classes="metadataview--value")
+        )
+
+        warnings = self.ctx.pe.get_warnings()
+        if warnings:
+            yield Label("  warnings:", classes="metadataview--key")
+            for warning in warnings:
+                yield Label(f"    - {warning}")
 
 
 class HexView(ScrollView):
@@ -368,22 +407,6 @@ STRUCTURES = """
 """
 
 
-class Line(Horizontal):
-    """A line of text. Children should be Static widgets."""
-
-    DEFAULT_CSS = """
-        Line {
-            /* ensure each line doesn't overflow to subsequent row */
-            height: 1;
-        }
-
-        Line > Static {
-            /* by default, the widget will expand to fill the available space */
-            width: auto;
-        }
-    """
-
-
 class StructureView(Widget):
     COMPONENT_CLASSES = {
         "structureview--field-name",
@@ -470,9 +493,6 @@ class StructureView(Widget):
                 # strip of enum name, leaving just the value.
                 # like IMAGE_FILE_MACHINE_I386
                 value = value.name
-
-            self.log(field.name)
-            self.log(type(value))
 
             table.add_row(
                 str(field.name),
@@ -582,6 +602,13 @@ class PEApp(App):
         yield Header()
         yield MetadataView(self.ctx)
 
+        # self.ctx.pe.__warnings
+
+        # IMAGE_NT_HEADERS
+        # IMAGE_OPTIONAL_HEADER(64)
+        # DATA_DIRECTORY
+        # rich header (hex, parsed)
+        # sections
         yield StructureView(self.ctx, self.ctx.pe.DOS_HEADER.get_file_offset(), "IMAGE_DOS_HEADER")
         yield StructureView(self.ctx, self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_FILE_HEADER")
 
