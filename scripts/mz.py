@@ -11,7 +11,7 @@ import logging
 import pathlib
 import argparse
 import textwrap
-from typing import Any, Dict, List, Callable, Tuple
+from typing import Any, Dict, List, Callable, Tuple, Optional
 from dataclasses import dataclass
 
 import pefile
@@ -40,6 +40,15 @@ class Context:
     pe: pefile.PE
     cparser: cstruct.cstruct
     renderers: Dict[str, Callable[[Any], str]]
+
+    @property
+    def bitness(self):
+        if self.pe.FILE_HEADER.Machine == pefile.MACHINE_TYPE["IMAGE_FILE_MACHINE_I386"]:
+            return 32
+        elif self.pe.FILE_HEADER.Machine == pefile.MACHINE_TYPE["IMAGE_FILE_MACHINE_AMD64"]:
+            return 64
+        else:
+            raise ValueError("unknown bitness")
 
 
 def w(s: str) -> Text:
@@ -106,6 +115,7 @@ class HexView(ScrollView):
     # TODO: label/title
     # TODO: make this width the application global width?
     # TODO: make it easy to copy from
+    # TODO: strings
 
     # refer directly to line api documentation here:
     # https://textual.textualize.io/guide/widgets/#line-api
@@ -404,6 +414,138 @@ STRUCTURES = """
         WORD  SizeOfOptionalHeader;
         WORD  Characteristics;
     };
+
+    enum HDR_MAGIC : uint16 {
+        IMAGE_NT_OPTIONAL_HDR32_MAGIC = 0x10B,
+        IMAGE_NT_OPTIONAL_HDR64_MAGIC = 0x20B,
+        IMAGE_ROM_OPTIONAL_HDR_MAGIC = 0x107,
+    };
+
+    enum HDR_SUBSYSTEM : uint16 {
+        IMAGE_SUBSYSTEM_UNKNOWN = 0,
+        IMAGE_SUBSYSTEM_NATIVE = 1,
+        IMAGE_SUBSYSTEM_WINDOWS_GUI = 2,
+        IMAGE_SUBSYSTEM_WINDOWS_CUI = 3,
+        IMAGE_SUBSYSTEM_OS2_CUI = 5,
+        IMAGE_SUBSYSTEM_POSIX_CUI = 7,
+        IMAGE_SUBSYSTEM_WINDOWS_CE_GUI = 9,
+        IMAGE_SUBSYSTEM_EFI_APPLICATION = 10,
+        IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER = 11,
+        IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER = 12,
+        IMAGE_SUBSYSTEM_EFI_ROM = 13,
+        IMAGE_SUBSYSTEM_XBOX = 14,
+        IMAGE_SUBSYSTEM_WINDOWS_BOOT_APPLICATION = 16,
+    };
+
+    struct IMAGE_DATA_DIRECTORY {
+        DWORD VirtualAddress;
+        DWORD Size;
+    };
+
+    #define IMAGE_NUMBEROF_DIRECTORY_ENTRIES 16
+
+    enum IMAGE_DIRECTORY_ENTRY : uint8 {
+        IMAGE_DIRECTORY_ENTRY_EXPORT = 0,
+        IMAGE_DIRECTORY_ENTRY_IMPORT = 1,
+        IMAGE_DIRECTORY_ENTRY_RESOURCE = 2,
+        IMAGE_DIRECTORY_ENTRY_EXCEPTION = 3,
+        IMAGE_DIRECTORY_ENTRY_SECURITY = 4,
+        IMAGE_DIRECTORY_ENTRY_BASERELOC = 5,
+        IMAGE_DIRECTORY_ENTRY_DEBUG = 6,
+        IMAGE_DIRECTORY_ENTRY_ARCHITECTURE = 7,
+        IMAGE_DIRECTORY_ENTRY_GLOBALPTR = 8,
+        IMAGE_DIRECTORY_ENTRY_TLS = 9,
+        IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG = 10,
+        IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT = 11,
+        IMAGE_DIRECTORY_ENTRY_IAT = 12,
+        IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT = 13,
+        IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR = 14,
+    };
+
+    struct IMAGE_OPTIONAL_HEADER32 {
+        HDR_MAGIC            Magic;
+        BYTE                 MajorLinkerVersion;
+        BYTE                 MinorLinkerVersion;
+        DWORD                SizeOfCode;
+        DWORD                SizeOfInitializedData;
+        DWORD                SizeOfUninitializedData;
+        DWORD                AddressOfEntryPoint;
+        DWORD                BaseOfCode;
+        DWORD                BaseOfData;
+        DWORD                ImageBase;
+        DWORD                SectionAlignment;
+        DWORD                FileAlignment;
+        WORD                 MajorOperatingSystemVersion;
+        WORD                 MinorOperatingSystemVersion;
+        WORD                 MajorImageVersion;
+        WORD                 MinorImageVersion;
+        WORD                 MajorSubsystemVersion;
+        WORD                 MinorSubsystemVersion;
+        DWORD                Win32VersionValue;
+        DWORD                SizeOfImage;
+        DWORD                SizeOfHeaders;
+        DWORD                CheckSum;
+        HDR_SUBSYSTEM        Subsystem;
+        WORD                 DllCharacteristics;
+        DWORD                SizeOfStackReserve;
+        DWORD                SizeOfStackCommit;
+        DWORD                SizeOfHeapReserve;
+        DWORD                SizeOfHeapCommit;
+        DWORD                LoaderFlags;
+        DWORD                NumberOfRvaAndSizes;
+        IMAGE_DATA_DIRECTORY DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES];
+    };
+
+    struct IMAGE_OPTIONAL_HEADER64 {
+        HDR_MAGIC            Magic;
+        BYTE                 MajorLinkerVersion;
+        BYTE                 MinorLinkerVersion;
+        DWORD                SizeOfCode;
+        DWORD                SizeOfInitializedData;
+        DWORD                SizeOfUninitializedData;
+        DWORD                AddressOfEntryPoint;
+        DWORD                BaseOfCode;
+        ULONGLONG            ImageBase;
+        DWORD                SectionAlignment;
+        DWORD                FileAlignment;
+        WORD                 MajorOperatingSystemVersion;
+        WORD                 MinorOperatingSystemVersion;
+        WORD                 MajorImageVersion;
+        WORD                 MinorImageVersion;
+        WORD                 MajorSubsystemVersion;
+        WORD                 MinorSubsystemVersion;
+        DWORD                Win32VersionValue;
+        DWORD                SizeOfImage;
+        DWORD                SizeOfHeaders;
+        DWORD                CheckSum;
+        HDR_SUBSYSTEM        Subsystem;
+        WORD                 DllCharacteristics;
+        ULONGLONG            SizeOfStackReserve;
+        ULONGLONG            SizeOfStackCommit;
+        ULONGLONG            SizeOfHeapReserve;
+        ULONGLONG            SizeOfHeapCommit;
+        DWORD                LoaderFlags;
+        DWORD                NumberOfRvaAndSizes;
+        IMAGE_DATA_DIRECTORY DataDirectory[IMAGE_NUMBEROF_DIRECTORY_ENTRIES];
+    };
+
+    #define IMAGE_SIZEOF_SHORT_NAME 8
+
+    struct IMAGE_SECTION_HEADER {
+        uint8_t	Name[IMAGE_SIZEOF_SHORT_NAME];
+        union {
+            uint32_t PhysicalAddress;
+            uint32_t VirtualSize;
+        } Misc;
+        uint32_t VirtualAddress;
+        uint32_t SizeOfRawData;
+        uint32_t PointerToRawData;
+        uint32_t PointerToRelocations;
+        uint32_t PointerToLinenumbers;
+        uint16_t NumberOfRelocations;
+        uint16_t NumberOfLinenumbers;
+        uint32_t Characteristics;
+    };
 """
 
 
@@ -446,13 +588,15 @@ class StructureView(Widget):
         }
     """
 
-    def __init__(self, ctx: Context, address: int, typename: str, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, ctx: Context, address: int, typename: str, name: Optional[str] = None, *args, **kwargs):
+        super().__init__(name=name, *args, **kwargs)
         self.add_class("pe-pane")
         self.styles.height = "auto"
 
         self.ctx = ctx
         self.address = address
+        #self.name = name
+
         self.type = self.ctx.cparser.typedefs[typename]
 
         buf = self.ctx.buf[self.address:self.address + self.type.size]
@@ -462,7 +606,7 @@ class StructureView(Widget):
         yield Line(
             # like: struct IMAGE_DOS_HEADER {
             Static("struct ", classes="structureview--field-decoration"),
-            Static(self.type.name, classes="structureview--struct-name"),
+            Static(self.name or self.type.name, classes="structureview--struct-name"),
             Static(" {", classes="structureview--field-decoration")
         )
 
@@ -486,7 +630,10 @@ class StructureView(Widget):
 
             key = f"{self.type.name}.{field.name}"
             if key in self.ctx.renderers:
-                value = self.ctx.renderers[key](value)
+                try:
+                    value = self.ctx.renderers[key](value)
+                except DontRender:
+                    continue
             elif isinstance(value, int):
                 value = hex(value)
             elif isinstance(value, EnumInstance):
@@ -519,6 +666,9 @@ def render_timestamp(v: int) -> str:
 
 
 def render_bitflags(bits: List[Tuple[str, int]], v: int) -> str:
+    if not v:
+        return "(empty)"
+
     ret = []
 
     for flag, bit in bits:
@@ -547,8 +697,36 @@ def render_characteristics(v: int) -> str:
         ("IMAGE_FILE_UP_SYSTEM_ONLY", 0x4000),
         ("IMAGE_FILE_BYTES_REVERSED_HI", 0x8000),
     ]
-
     return render_bitflags(bits, v)
+
+
+def render_dll_characteristics(v: int) -> str:
+    bits = [
+        ("IMAGE_LIBRARY_PROCESS_INIT", 0x0001),  # reserved
+        ("IMAGE_LIBRARY_PROCESS_TERM", 0x0002),  # reserved
+        ("IMAGE_LIBRARY_THREAD_INIT", 0x0004),  # reserved
+        ("IMAGE_LIBRARY_THREAD_TERM", 0x0008),  # reserved
+        ("IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA", 0x0020),
+        ("IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE", 0x0040),
+        ("IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY", 0x0080),
+        ("IMAGE_DLLCHARACTERISTICS_NX_COMPAT", 0x0100),
+        ("IMAGE_DLLCHARACTERISTICS_NO_ISOLATION", 0x0200),
+        ("IMAGE_DLLCHARACTERISTICS_NO_SEH", 0x0400),
+        ("IMAGE_DLLCHARACTERISTICS_NO_BIND", 0x0800),
+        ("IMAGE_DLLCHARACTERISTICS_APPCONTAINER", 0x1000),
+        ("IMAGE_DLLCHARACTERISTICS_WDM_DRIVER", 0x2000),
+        ("IMAGE_DLLCHARACTERISTICS_GUARD_CF", 0x4000),
+        ("IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE", 0x8000),
+    ]
+    return render_bitflags(bits, v)
+
+
+class DontRender(Exception):
+    pass
+
+
+def dont_render(v: Any) -> str:
+    raise DontRender()
 
 
 class PEApp(App):
@@ -575,6 +753,10 @@ class PEApp(App):
             margin: 1;
             margin-bottom: 0;
         }
+
+        .section-hexview {
+            height: 30;
+        }
     """
 
     def __init__(self, path: pathlib.Path, buf: bytearray) -> None:
@@ -588,10 +770,14 @@ class PEApp(App):
         cparser = cstruct.cstruct()
         cparser.load(STRUCTURES)
 
-
         renderers = {
             "IMAGE_FILE_HEADER.TimeDateStamp": render_timestamp,
             "IMAGE_FILE_HEADER.Characteristics": render_characteristics,
+            "IMAGE_OPTIONAL_HEADER32.DllCharacteristics": render_dll_characteristics,
+            "IMAGE_OPTIONAL_HEADER64.DllCharacteristics": render_dll_characteristics,
+            # parsed in more detail elsewhere.
+            "IMAGE_OPTIONAL_HEADER32.DataDirectory": dont_render,
+            "IMAGE_OPTIONAL_HEADER64.DataDirectory": dont_render,
         }
 
         self.ctx = Context(path, buf, pe, cparser, renderers)
@@ -602,17 +788,50 @@ class PEApp(App):
         yield Header()
         yield MetadataView(self.ctx)
 
-        # self.ctx.pe.__warnings
-
-        # IMAGE_NT_HEADERS
-        # IMAGE_OPTIONAL_HEADER(64)
-        # DATA_DIRECTORY
-        # rich header (hex, parsed)
         # sections
+        # imports
+        # exports
+        # rich header (hex, parsed)
+        # resources
         yield StructureView(self.ctx, self.ctx.pe.DOS_HEADER.get_file_offset(), "IMAGE_DOS_HEADER")
         yield StructureView(self.ctx, self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_FILE_HEADER")
 
-        yield HexTestView(self.ctx)
+        if self.ctx.bitness == 32:
+            yield StructureView(self.ctx, self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER32")
+        elif self.ctx.bitness == 64:
+            yield StructureView(self.ctx, self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER64")
+        else:
+            raise ValueError(f"unknown bitness: {self.ctx.bitness}")
+
+        for i, directory in enumerate(self.ctx.pe.OPTIONAL_HEADER.DATA_DIRECTORY):
+            if directory.VirtualAddress == 0 or directory.Size == 0:
+                continue
+
+            enum = self.ctx.cparser.typedefs["IMAGE_DIRECTORY_ENTRY"]
+            name = enum.reverse[i]
+
+            # TODO: don't actually show these
+            # show maybe as hex view
+            yield StructureView(self.ctx, directory.get_file_offset(), f"IMAGE_DATA_DIRECTORY", name=name)
+
+        for section in self.ctx.pe.sections:
+            yield HexView(self.ctx, section.get_file_offset(), section.SizeOfRawData, classes="section-hexview")
+
+            """
+            # TODO: section view
+            # height: size of screen?
+            section.name
+
+            section_dict["Entropy"] = section.get_entropy()
+            if md5 is not None:
+                section_dict["MD5"] = section.get_hash_md5()
+            if sha1 is not None:
+                section_dict["SHA1"] = section.get_hash_sha1()
+            if sha256 is not None:
+                section_dict["SHA256"] = section.get_hash_sha256()
+            if sha512 is not None:
+                section_dict["SHA512"] = section.get_hash_sha512()
+            """
 
     def on_mount(self) -> None:
         self.log("mounted")
