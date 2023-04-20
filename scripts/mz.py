@@ -729,6 +729,140 @@ def dont_render(v: Any) -> str:
     raise DontRender()
 
 
+class SectionView(Static):
+    COMPONENT_CLASSES = {
+        "sectionview--key",
+        "sectionview--value",
+    }
+
+    DEFAULT_CSS = """
+        SectionView .sectionview--title {
+            color: $secondary;
+        }
+
+        SectionView .sectionview--decoration {
+            color: $text-muted;
+        }
+
+        SectionView .sectionview--key {
+            color: $accent;
+        }
+
+        SectionView .sectionview--value {
+            color: $text;
+        }
+
+        SectionView .sectionview--table {
+            margin-left: 1;
+        }
+    """
+
+    def __init__(self, ctx: Context, section: pefile.SectionStructure, section_children: List[Widget] = None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_class("pe-pane")
+
+        self.ctx = ctx
+        self.section = section
+        self.section_children = section_children or []
+
+    def compose(self) -> ComposeResult:
+        try:
+            name = self.section.Name.partition(b"\x00")[0].decode("ascii")
+        except UnicodeDecodeError:
+            name = "(invalid)"
+
+
+        yield Line(
+            Static(name, classes="sectionview--title"),
+            Static(" section:", classes="sectionview--decoration"),
+        )
+
+        table = rich.table.Table(box=None, show_header=False)
+
+        style_key = self.get_component_rich_style("sectionview--key")
+        style_value = self.get_component_rich_style("sectionview--value")
+
+        table.add_column("key", style=style_key)
+        table.add_column("value", style=style_value)
+
+        table.add_row("size:", hex(self.section.SizeOfRawData) + " / " + hex(self.section.Misc_VirtualSize))
+        table.add_row("entropy:", "%.02f" % self.section.get_entropy())
+        table.add_row("md5:", self.section.get_hash_md5())
+        table.add_row("sha256:", self.section.get_hash_sha256())
+
+        yield Static(table, classes="sectionview--table")
+
+        for child in self.section_children:
+            yield child
+
+        # TODO: fixup addresses to VA vs file offset
+        yield HexView(self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="section-hexview")
+
+
+class SegmentView(Static):
+    """a view used for regions of the file not covered by a section"""
+    COMPONENT_CLASSES = {
+        "segmentview--key",
+        "segmentview--value",
+    }
+
+    DEFAULT_CSS = """
+        SegmentView .segmentview--title {
+            color: $secondary;
+        }
+
+        SegmentView .segmentview--decoration {
+            color: $text-muted;
+        }
+
+        SegmentView .segmentview--key {
+            color: $accent;
+        }
+
+        SegmentView .segmentview--value {
+            color: $text;
+        }
+
+        SegmentView .segmentview--table {
+            margin-left: 1;
+        }
+    """
+
+    def __init__(self, ctx: Context, segment: str, address: int, length: int, segment_children: List[Widget] = None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_class("pe-pane")
+
+        self.ctx = ctx
+        self.segment = segment
+        self.address = address
+        self.length = length
+        self.segment_children = segment_children or []
+
+    def compose(self) -> ComposeResult:
+        yield Line(
+            Static(self.segment, classes="segmentview--title"),
+            Static(" segment:", classes="segmentview--decoration"),
+        )
+
+        table = rich.table.Table(box=None, show_header=False)
+
+        style_key = self.get_component_rich_style("segmentview--key")
+        style_value = self.get_component_rich_style("segmentview--value")
+
+        table.add_column("key", style=style_key)
+        table.add_column("value", style=style_value)
+
+        table.add_row("size:", hex(self.length))
+
+        yield Static(table, classes="segmentview--table")
+
+        for child in self.segment_children:
+            yield child
+
+        # TODO: fixup addresses to VA vs file offset
+        yield HexView(self.ctx, self.address, self.length)
+
+
 class PEApp(App):
     # TODO: how does the app layout when there are hundreds of hex views, each with thousands of lines?
 
@@ -749,9 +883,9 @@ class PEApp(App):
             padding: 0 1;
 
             /* margin: outside the bounding box */
-            /* margin: 1 on all sides but bottom, to collapse with next pane */
-            margin: 1;
-            margin-bottom: 0;
+            /* margin: 0 on all sides but top */
+            margin: 0;
+            margin-top: 1;
         }
 
         .section-hexview {
@@ -785,8 +919,9 @@ class PEApp(App):
         self.title = f"pe: {self.ctx.path.name}"
 
     def compose(self) -> ComposeResult:
-        yield Header()
         yield MetadataView(self.ctx)
+
+        yield SegmentView(self.ctx, "header", 0, 0x400)
 
         # sections
         # imports
@@ -815,23 +950,11 @@ class PEApp(App):
             yield StructureView(self.ctx, directory.get_file_offset(), f"IMAGE_DATA_DIRECTORY", name=name)
 
         for section in self.ctx.pe.sections:
-            yield HexView(self.ctx, section.get_file_offset(), section.SizeOfRawData, classes="section-hexview")
+            yield SectionView(self.ctx, section)
 
-            """
-            # TODO: section view
-            # height: size of screen?
-            section.name
-
-            section_dict["Entropy"] = section.get_entropy()
-            if md5 is not None:
-                section_dict["MD5"] = section.get_hash_md5()
-            if sha1 is not None:
-                section_dict["SHA1"] = section.get_hash_sha1()
-            if sha256 is not None:
-                section_dict["SHA256"] = section.get_hash_sha256()
-            if sha512 is not None:
-                section_dict["SHA512"] = section.get_hash_sha512()
-            """
+        overlay_offset = self.ctx.pe.get_overlay_data_start_offset()
+        if overlay_offset:
+            yield SegmentView(self.ctx, "overlay", overlay_offset, len(self.ctx.buf) - overlay_offset)
 
     def on_mount(self) -> None:
         self.log("mounted")
