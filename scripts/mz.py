@@ -4,6 +4,8 @@
     "dissect.cstruct==3.6",
 """
 import os
+import re
+from collections import namedtuple
 import sys
 import mmap
 import asyncio
@@ -11,8 +13,8 @@ import logging
 import pathlib
 import argparse
 import textwrap
-from typing import Any, Dict, List, Callable, Tuple, Optional
-from dataclasses import dataclass
+from typing import Any, Dict, List, Callable, Tuple, Optional, Literal, Iterable
+from dataclasses import dataclass, field
 
 import pefile
 from dissect import cstruct
@@ -24,7 +26,7 @@ from rich.segment import Segment
 from textual.strip import Strip
 from textual.widget import Widget
 from textual.logging import TextualHandler
-from textual.widgets import Label, Header, Static
+from textual.widgets import Label, Header, Static, TabbedContent, TabPane
 from textual.geometry import Size
 from textual.containers import Horizontal, Container
 from textual.scroll_view import ScrollView
@@ -729,6 +731,70 @@ def dont_render(v: Any) -> str:
     raise DontRender()
 
 
+ASCII_BYTE = r" !\"#\$%&\'\(\)\*\+,-\./0123456789:;<=>\?@ABCDEFGHIJKLMNOPQRSTUVWXYZ\[\]\^_`abcdefghijklmnopqrstuvwxyz\{\|\}\\\~\t".encode(
+    "ascii"
+)
+ASCII_RE_4 = re.compile(b"([%s]{%d,})" % (ASCII_BYTE, 4))
+UNICODE_RE_4 = re.compile(b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, 4))
+REPEATS = [b"A", b"\x00", b"\xfe", b"\xff"]
+SLICE_SIZE = 4096
+
+
+@dataclass
+class String:
+    s: str
+    offset: int
+
+
+def buf_filled_with(buf, character):
+    dupe_chunk = character * SLICE_SIZE
+    for offset in range(0, len(buf), SLICE_SIZE):
+        new_chunk = buf[offset : offset + SLICE_SIZE]
+        if dupe_chunk[: len(new_chunk)] != new_chunk:
+            return False
+    return True
+
+
+def extract_ascii_strings(buf: bytes, n: int=4) -> Iterable[String]:
+    """Extract ASCII strings from the given binary data."""
+
+    if not buf:
+        return
+
+    if (buf[0] in REPEATS) and buf_filled_with(buf, buf[0]):
+        return
+
+    r = None
+    if n == 4:
+        r = ASCII_RE_4
+    else:
+        reg = b"([%s]{%d,})" % (ASCII_BYTE, n)
+        r = re.compile(reg)
+    for match in r.finditer(buf):
+        yield String(match.group().decode("ascii"), match.start())
+
+
+def extract_unicode_strings(buf: bytes, n: int=4) -> Iterable[String]:
+    """Extract naive UTF-16 strings from the given binary data."""
+
+    if not buf:
+        return
+
+    if (buf[0] in REPEATS) and buf_filled_with(buf, buf[0]):
+        return
+
+    if n == 4:
+        r = UNICODE_RE_4
+    else:
+        reg = b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, n)
+        r = re.compile(reg)
+    for match in r.finditer(buf):
+        try:
+            yield String(match.group().decode("utf-16"), match.start())
+        except UnicodeDecodeError:
+            pass
+
+
 class SectionView(Static):
     COMPONENT_CLASSES = {
         "sectionview--key",
@@ -755,6 +821,10 @@ class SectionView(Static):
         SectionView .sectionview--table {
             margin-left: 1;
         }
+
+        SegmentView > HexView {
+            height: 32;
+        }
     """
 
     def __init__(self, ctx: Context, section: pefile.SectionStructure, section_children: List[Widget] = None, *args, **kwargs):
@@ -770,7 +840,6 @@ class SectionView(Static):
             name = self.section.Name.partition(b"\x00")[0].decode("ascii")
         except UnicodeDecodeError:
             name = "(invalid)"
-
 
         yield Line(
             Static(name, classes="sectionview--title"),
@@ -792,11 +861,13 @@ class SectionView(Static):
 
         yield Static(table, classes="sectionview--table")
 
-        for child in self.section_children:
-            yield child
-
-        # TODO: fixup addresses to VA vs file offset
-        yield HexView(self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="section-hexview")
+        with TabbedContent():
+            with TabPane("structures"):
+                for child in self.section_children:
+                    yield child
+            with TabPane("raw"):
+                # TODO: fixup addresses to VA vs file offset
+                yield HexView(self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="section-hexview")
 
 
 class SegmentView(Static):
@@ -825,6 +896,10 @@ class SegmentView(Static):
 
         SegmentView .segmentview--table {
             margin-left: 1;
+        }
+
+        SegmentView > HexView {
+            height: 32;
         }
     """
 
@@ -856,11 +931,13 @@ class SegmentView(Static):
 
         yield Static(table, classes="segmentview--table")
 
-        for child in self.segment_children:
-            yield child
-
-        # TODO: fixup addresses to VA vs file offset
-        yield HexView(self.ctx, self.address, self.length)
+        with TabbedContent():
+            with TabPane("structures"):
+                for child in self.segment_children:
+                    yield child
+            with TabPane("raw"):
+                # TODO: fixup addresses to VA vs file offset
+                yield HexView(self.ctx, self.address, self.length)
 
 
 class PEApp(App):
@@ -918,23 +995,26 @@ class PEApp(App):
 
         self.title = f"pe: {self.ctx.path.name}"
 
-    def compose(self) -> ComposeResult:
-        yield MetadataView(self.ctx)
+    @dataclass
+    class Region:
+        address: int
+        length: int
+        type: Literal["segment"] | Literal["section"]
+        section: Optional[pefile.SectionStructure] = None
+        children: List[Any] = field(default_factory=list)
 
-        yield SegmentView(self.ctx, "header", 0, 0x400)
+        @property
+        def end(self) -> int:
+            return self.address + self.length
 
-        # sections
-        # imports
-        # exports
-        # rich header (hex, parsed)
-        # resources
-        yield StructureView(self.ctx, self.ctx.pe.DOS_HEADER.get_file_offset(), "IMAGE_DOS_HEADER")
-        yield StructureView(self.ctx, self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_FILE_HEADER")
+    def collect_file_structures(self):
+        yield (self.ctx.pe.DOS_HEADER.get_file_offset(), "IMAGE_DOS_HEADER", None)
+        yield (self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_DOS_HEADER", None)
 
         if self.ctx.bitness == 32:
-            yield StructureView(self.ctx, self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER32")
+            yield (self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER32", None)
         elif self.ctx.bitness == 64:
-            yield StructureView(self.ctx, self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER64")
+            yield (self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER64", None)
         else:
             raise ValueError(f"unknown bitness: {self.ctx.bitness}")
 
@@ -947,14 +1027,81 @@ class PEApp(App):
 
             # TODO: don't actually show these
             # show maybe as hex view
-            yield StructureView(self.ctx, directory.get_file_offset(), f"IMAGE_DATA_DIRECTORY", name=name)
+            yield (directory.get_file_offset(), f"IMAGE_DATA_DIRECTORY", name)
 
-        for section in self.ctx.pe.sections:
-            yield SectionView(self.ctx, section)
+    def compute_file_regions(self) -> Tuple[Region]:
+        regions = []
 
-        overlay_offset = self.ctx.pe.get_overlay_data_start_offset()
-        if overlay_offset:
-            yield SegmentView(self.ctx, "overlay", overlay_offset, len(self.ctx.buf) - overlay_offset)
+        for section in sorted(self.ctx.pe.sections, key=lambda s: s.PointerToRawData):
+            regions.append(
+                self.Region(
+                    section.get_PointerToRawData_adj(),
+                    section.SizeOfRawData,
+                    "section",
+                    section
+                )
+            )
+
+        # segment that contains all data until the first section
+        regions.insert(0, self.Region(0, regions[0].address, "segment"))
+
+        # segment that contains all data after the last section
+        # aka. "overlay"
+        last_section = regions[-1]
+        if last_section.end < len(self.ctx.buf):
+            regions.append(self.Region(last_section.end, len(self.ctx.buf) - last_section.end, "segment"))
+
+        # add segments for any gaps between sections.
+        # note that we append new items to the end of the list and then resort,
+        # to avoid mutating the list while we're iterating over it.
+        for i in range(1, len(regions)):
+            prior = regions[i - 1]
+            region = regions[i]
+
+            if prior.end != region.address:
+                regions.append(self.Region(prior.end, region.address - prior.end, "segment"))
+        regions.sort(key=lambda s: s.address)
+
+        for structure in self.collect_file_structures():
+            offset, type, name = structure
+            for region in regions:
+                if offset >= region.address and offset < region.end:
+                    region.children.append(structure)
+                    break
+
+        return regions
+
+    def compose(self) -> ComposeResult:
+        yield MetadataView(self.ctx)
+
+        # sections
+        # TODO: imports
+        # TODO: exports
+        # TODO: rich header (hex, parsed)
+        # TODO: resources
+
+        regions = self.compute_file_regions()
+        for i, region in enumerate(regions):
+            children = [
+                StructureView(self.ctx, *child) for child in region.children
+            ]
+
+            if region.type == "segment":
+                if i == 0:
+                    name = "header"
+                elif i == len(regions):
+                    name = "overlay"
+                else:
+                    name = "gap"
+
+                # TODO: if segment is all NULLs, don't show it (header/gap/overlay)
+                yield SegmentView(self.ctx, name, region.address, region.length, segment_children=children)
+
+            elif region.type == "section":
+                yield SectionView(self.ctx, region.section, section_children=children)
+
+            else:
+                raise ValueError(f"unknown region type: {region.type}")
 
     def on_mount(self) -> None:
         self.log("mounted")
