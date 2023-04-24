@@ -435,7 +435,7 @@ class StringsView(VerticalScroll):
             yield Line(
                 Static(f"{self.address + s.offset:08x}:", classes="stringsview--address"),
                 Static(" ascii: " if s.flavor == "ascii" else " utf16: ", classes="stringsview--flavor"),
-                Static(s.s, classes=" ".join(string_classes)),
+                Static(s.s, classes=" ".join(string_classes), markup=False),
             )
 
 
@@ -470,10 +470,10 @@ class BinaryView(Widget):
 
     def compose(self) -> ComposeResult:
         with TabbedContent():
-            with TabPane("data"):
-                yield HexView(self.ctx, self.address, self.length)
             with TabPane("strings"):
                 yield StringsView(self.ctx, self.address, self.length)
+            with TabPane("data"):
+                yield HexView(self.ctx, self.address, self.length)
 
 
 STRUCTURES = """
@@ -652,6 +652,7 @@ STRUCTURES = """
 
 class StructureView(Widget):
     COMPONENT_CLASSES = {
+        "structureview--address",
         "structureview--struct-name",
         "structureview--field-name",
         "structureview--field-type",
@@ -667,6 +668,10 @@ class StructureView(Widget):
 
         StructureView > Static.fields {
           margin-left: 1;
+        }
+
+        StructureView .structureview--address {
+          color: $accent;
         }
 
         StructureView .structureview--struct-name {
@@ -727,11 +732,13 @@ class StructureView(Widget):
 
         decoration_style = self.get_component_rich_style("structureview--field-decoration")
         name_style = self.get_component_rich_style("structureview--struct-name")
+        address_style = self.get_component_rich_style("structureview--address")
 
         # like: struct IMAGE_DOS_HEADER {
         t.append("struct ", style=decoration_style)
         t.append(self.name or self.type.name, style=name_style)
-        t.append(" {", style=decoration_style)
+        t.append(" @ ", style=decoration_style)
+        t.append(f"{self.address:08x}:", style=decoration_style)
         t.append("\n")
 
         # use a table for formatting the structure fields,
@@ -750,7 +757,6 @@ class StructureView(Widget):
         table.add_column("offset", style=style_offset)
 
         has_hidden = False
-        self.log(self.type.name, self.name)
         key_fields = self.ctx.key_fields.get(self.type.name, set())
         for field in self.type.fields:
             if self.is_minimized:
@@ -798,9 +804,6 @@ class StructureView(Widget):
             console.print(table)
         t.append(Text.from_ansi(capture.get()))
 
-        t.append("\n")
-        t.append("}", style=decoration_style)
-
         return t
 
 
@@ -811,6 +814,10 @@ def render_timestamp(v: int) -> str:
         return datetime.datetime.fromtimestamp(v).isoformat("T") + "Z"
     except ValueError:
         return "(invalid)"
+
+
+def render_u32(v: int) -> str:
+    return f"{v:08x}"
 
 
 def render_bitflags(bits: List[Tuple[str, int]], v: int) -> str:
@@ -1144,16 +1151,18 @@ class PEApp(App):
             "IMAGE_FILE_HEADER.TimeDateStamp": render_timestamp,
             "IMAGE_FILE_HEADER.Characteristics": render_characteristics,
             "IMAGE_OPTIONAL_HEADER32.DllCharacteristics": render_dll_characteristics,
+            "IMAGE_OPTIONAL_HEADER32.CheckSum": render_u32,
             "IMAGE_OPTIONAL_HEADER64.DllCharacteristics": render_dll_characteristics,
+            "IMAGE_OPTIONAL_HEADER64.CheckSum": render_u32,
             # parsed in more detail elsewhere.
             "IMAGE_OPTIONAL_HEADER32.DataDirectory": dont_render,
             "IMAGE_OPTIONAL_HEADER64.DataDirectory": dont_render,
         }
 
         key_fields = {
-            "IMAGE_FILE_HEADER": {"Machine", "TimeDateStamp"},
-            "IMAGE_OPTIONAL_HEADER32": {"ImageBase", "Subsystem"},
-            "IMAGE_OPTIONAL_HEADER64": {"ImageBase", "Subsystem"},
+            "IMAGE_FILE_HEADER": {"Machine", "TimeDateStamp", "Characteristics"},
+            "IMAGE_OPTIONAL_HEADER32": {"ImageBase", "Subsystem", "CheckSum", "DllCharacteristics"},
+            "IMAGE_OPTIONAL_HEADER64": {"ImageBase", "Subsystem", "CheckSum", "DllCharacteristics"},
             "IMAGE_DATA_DIRECTORY": {"VirtualAddress", "Size"},
         }
 
@@ -1246,7 +1255,7 @@ class PEApp(App):
             if region.type == "segment":
                 if i == 0:
                     name = "header"
-                elif i == len(regions):
+                elif i == len(regions) - 1:
                     name = "overlay"
                 else:
                     name = "gap"
