@@ -784,7 +784,7 @@ class StructureView(Widget):
                 "=",
                 str(value),
                 "@",
-                hex(field.offset),
+                "+" + hex(field.offset),
             )
 
         if self.is_minimized and has_hidden:
@@ -960,6 +960,10 @@ class SectionView(Static):
             height: auto;
         }
 
+        SectionView .sectionview--address {
+            color: $accent;
+        }
+
         SectionView .sectionview--title {
             color: $secondary;
         }
@@ -1006,7 +1010,10 @@ class SectionView(Static):
 
         yield Line(
             Static(name, classes="sectionview--title"),
-            Static(" section:", classes="sectionview--decoration"),
+            Static(" section", classes="sectionview--decoration"),
+            Static(" @ ", classes="sectionview--decoration"),
+            Static(f"{self.section.get_PointerToRawData_adj():#08x}", classes="sectionview--decoration"),
+            Static(":", classes="sectionview--decoration"),
         )
 
         table = rich.table.Table(box=None, show_header=False)
@@ -1045,6 +1052,10 @@ class SegmentView(Static):
     DEFAULT_CSS = """
         SegmentView {
             height: auto;
+        }
+
+        SegmentView .segmentview--address {
+            color: $accent;
         }
 
         SegmentView .segmentview--title {
@@ -1089,20 +1100,13 @@ class SegmentView(Static):
     def compose(self) -> ComposeResult:
         yield Line(
             Static(self.segment, classes="segmentview--title"),
-            Static(" segment:", classes="segmentview--decoration"),
+            Static(" segment", classes="segmentview--decoration"),
+            Static(" @ ", classes="segmentview--decoration"),
+            Static(f"{self.address:#08x}", classes="segmentview--decoration"),
+            Static(" size=", classes="segmentview--decoration"),
+            Static(f"{self.length:#x}", classes="segmentview--decoration"),
+            Static(":", classes="segmentview--decoration"),
         )
-
-        table = rich.table.Table(box=None, show_header=False)
-
-        style_key = self.get_component_rich_style("segmentview--key")
-        style_value = self.get_component_rich_style("segmentview--value")
-
-        table.add_column("key", style=style_key)
-        table.add_column("value", style=style_value)
-
-        table.add_row("size:", hex(self.length))
-
-        yield Static(table, classes="segmentview--table")
 
         for child in self.segment_children:
             yield child
