@@ -20,12 +20,12 @@ import argparse
 import textwrap
 import itertools
 import dataclasses
-from typing import Any, List, Set, Tuple, Literal, Mapping, Callable, Iterable, Optional, Sequence
+from typing import Any, Set, List, Tuple, Literal, Mapping, Callable, Iterable, Optional, Sequence
 from dataclasses import dataclass
 
 import pefile
-import rich.console
 import rich.table
+import rich.console
 from dissect import cstruct
 from textual import events
 from rich.text import Text
@@ -51,7 +51,7 @@ class Context:
     pe: pefile.PE
     cparser: cstruct.cstruct
 
-    # specialized renderers for fields parsed by cstruct, 
+    # specialized renderers for fields parsed by cstruct,
     # such as timestamp from number of seconds.
     #
     # maps from {structure name}.{field name} to a renderer.
@@ -753,7 +753,6 @@ class StructureView(Widget):
         self.log(self.type.name, self.name)
         key_fields = self.ctx.key_fields.get(self.type.name, set())
         for field in self.type.fields:
-
             if self.is_minimized:
                 if field.name not in key_fields:
                     has_hidden = True
