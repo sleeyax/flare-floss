@@ -2,6 +2,13 @@
     "textual==0.20.1",
     "rich==13.3.3",
     "dissect.cstruct==3.6",
+
+
+    TODO:
+      - nav sidebar/tree
+      - click to expand structures from summary to full details
+      - structure & hexview side by side
+      - on hover structure highlight the hex
 """
 import os
 import re
@@ -393,10 +400,6 @@ class StringsView(VerticalScroll):
         StringsView .stringsview--flavor {
             color: $text-muted;
         }
-
-        StringsView .stringsview--string-muted {
-            color: $text-muted;
-        }
     """
 
     def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
@@ -410,31 +413,10 @@ class StringsView(VerticalScroll):
         buf = self.ctx.buf[self.address:self.address + self.length]
 
         for s in sorted(itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset):
-            is_muted = False
-            if "This program cannot be run in DOS mode" in s.s:
-                is_muted = True
-
-            if s.s in ["Rich"]:
-                is_muted = True
-
-            section_names = []
-            for section in sorted(self.ctx.pe.sections, key=lambda s: s.PointerToRawData):
-                try:
-                    section_names.append(section.Name.partition(b"\x00")[0].decode("ascii"))
-                except UnicodeDecodeError:
-                    pass
-
-            for section_name in section_names:
-                if s.s.endswith(section_name):
-                    is_muted = True
-
             string_classes = [
                 f"stringsview--{s.flavor}",
                 f"stringsview--string",
             ]
-            if is_muted:
-                self.log("found it")
-                string_classes.append("stringsview--string-muted")
 
             yield Line(
                 Static(f"{self.address + s.offset:08x}:", classes="stringsview--address"),
@@ -1169,8 +1151,6 @@ class PEApp(App):
 
     def compose(self) -> ComposeResult:
         yield MetadataView(self.ctx, classes="peapp--pane")
-
-        yield BinaryView(self.ctx, 0x0, 0x10000, classes="peapp--pane")
 
         # sections
         # TODO: imports
