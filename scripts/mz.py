@@ -6,6 +6,7 @@
 import os
 import re
 from collections import namedtuple
+import itertools
 import sys
 import mmap
 import asyncio
@@ -384,6 +385,18 @@ class StringsView(VerticalScroll):
             /* let the container set our size */
             height: auto;
         }
+
+        StringsView .stringsview--address {
+            color: $accent;
+        }
+
+        StringsView .stringsview--flavor {
+            color: $text-muted;
+        }
+
+        StringsView .stringsview--string-muted {
+            color: $text-muted;
+        }
     """
 
     def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
@@ -396,16 +409,38 @@ class StringsView(VerticalScroll):
     def compose(self) -> ComposeResult:
         buf = self.ctx.buf[self.address:self.address + self.length]
 
-        ret = []
+        for s in sorted(itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset):
+            is_muted = False
+            if "This program cannot be run in DOS mode" in s.s:
+                is_muted = True
 
-        for s in extract_ascii_strings(buf):
-            ret.append(f"{self.address + s.offset:08x}: {s.s}")
+            if s.s in ["Rich"]:
+                is_muted = True
 
-        for s in extract_unicode_strings(buf):
-            ret.append(f"{self.address + s.offset:08x}: {s.s}")
+            section_names = []
+            for section in sorted(self.ctx.pe.sections, key=lambda s: s.PointerToRawData):
+                try:
+                    section_names.append(section.Name.partition(b"\x00")[0].decode("ascii"))
+                except UnicodeDecodeError:
+                    pass
 
-        yield Static("\n".join(ret))
+            for section_name in section_names:
+                if s.s.endswith(section_name):
+                    is_muted = True
 
+            string_classes = [
+                f"stringsview--{s.flavor}",
+                f"stringsview--string",
+            ]
+            if is_muted:
+                self.log("found it")
+                string_classes.append("stringsview--string-muted")
+
+            yield Line(
+                Static(f"{self.address + s.offset:08x}:", classes="stringsview--address"),
+                Static(" ascii: " if s.flavor == "ascii" else " utf16: ", classes="stringsview--flavor"),
+                Static(s.s, classes=" ".join(string_classes))
+            )
 
 class BinaryView(Widget):
     DEFAULT_CSS = """
@@ -812,6 +847,7 @@ SLICE_SIZE = 4096
 class String:
     s: str
     offset: int
+    flavor: Literal["ascii", "unicode"]
 
 
 def buf_filled_with(buf, character):
@@ -839,7 +875,7 @@ def extract_ascii_strings(buf: bytes, n: int=4) -> Iterable[String]:
         reg = b"([%s]{%d,})" % (ASCII_BYTE, n)
         r = re.compile(reg)
     for match in r.finditer(buf):
-        yield String(match.group().decode("ascii"), match.start())
+        yield String(match.group().decode("ascii"), match.start(), "ascii")
 
 
 def extract_unicode_strings(buf: bytes, n: int=4) -> Iterable[String]:
@@ -858,7 +894,7 @@ def extract_unicode_strings(buf: bytes, n: int=4) -> Iterable[String]:
         r = re.compile(reg)
     for match in r.finditer(buf):
         try:
-            yield String(match.group().decode("utf-16"), match.start())
+            yield String(match.group().decode("utf-16"), match.start(), "unicode")
         except UnicodeDecodeError:
             pass
 
