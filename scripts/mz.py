@@ -28,7 +28,7 @@ from textual.widget import Widget
 from textual.logging import TextualHandler
 from textual.widgets import Label, Header, Static, TabbedContent, TabPane
 from textual.geometry import Size
-from textual.containers import Horizontal, Container
+from textual.containers import Horizontal, Container, VerticalScroll
 from textual.scroll_view import ScrollView
 from dissect.cstruct.types.enum import EnumInstance
 
@@ -323,7 +323,6 @@ class HexTestView(Widget):
     def __init__(self, ctx: Context, *args, **kwargs):
         super().__init__()
         self.add_class("pe-pane")
-        self.styles.height = "auto"
 
         self.ctx = ctx
 
@@ -375,6 +374,65 @@ class HexTestView(Widget):
 
         yield Label("0, 100: tall, overflowing")
         yield HexView(self.ctx, 0x0, len(self.ctx.buf), classes="tall")
+
+
+class StringsView(VerticalScroll):
+    DEFAULT_CSS = """
+    """
+
+    def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
+        super().__init__()
+        self.add_class("pe-pane")
+
+        self.ctx = ctx
+        self.address = address
+        self.length = length
+
+    def compose(self) -> ComposeResult:
+        buf = self.ctx.buf[self.address:self.address + self.length]
+
+        ret = []
+
+        for s in extract_ascii_strings(buf):
+            ret.append(f"{self.address + s.offset:08x}: {s.s}")
+
+        for s in extract_unicode_strings(buf):
+            ret.append(f"{self.address + s.offset:08x}: {s.s}")
+
+        yield Static("\n".join(ret))
+
+
+class BinaryView(Widget):
+    DEFAULT_CSS = """
+        BinaryView {
+            /* let the container set our size */
+            height: auto;
+        }
+
+        /* i haven't figured out the right pattern to use here */
+        /* we have to explicitly set these widgets size,       */
+        /* i think because the HexView is line-based.          */
+        /* the container is welcomed to override these sizes.  */
+        BinaryView StringsView,
+        BinaryView HexView {
+            height: 16;
+        }
+    """
+
+    def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
+        super().__init__()
+        self.add_class("pe-pane")
+
+        self.ctx = ctx
+        self.address = address
+        self.length = length
+
+    def compose(self) -> ComposeResult:
+        with TabbedContent():
+            with TabPane("strings", classes="tab"):
+                yield StringsView(self.ctx, self.address, self.length, classes="strings")
+            with TabPane("raw", classes="tab"):
+                yield HexView(self.ctx, self.address, self.length, classes="strings")
 
 
 STRUCTURES = """
@@ -561,6 +619,10 @@ class StructureView(Widget):
     }
 
     DEFAULT_CSS = """
+        StructureView {
+            height: auto;
+        }
+
         StructureView > Static.fields {
           margin-left: 1;
         }
@@ -593,7 +655,6 @@ class StructureView(Widget):
     def __init__(self, ctx: Context, address: int, typename: str, name: Optional[str] = None, *args, **kwargs):
         super().__init__(name=name, *args, **kwargs)
         self.add_class("pe-pane")
-        self.styles.height = "auto"
 
         self.ctx = ctx
         self.address = address
@@ -822,8 +883,7 @@ class SectionView(Static):
             margin-left: 1;
         }
 
-        SegmentView > HexView {
-            height: 32;
+        SectionView .sectionview--binaryview {
         }
     """
 
@@ -861,13 +921,10 @@ class SectionView(Static):
 
         yield Static(table, classes="sectionview--table")
 
-        with TabbedContent():
-            with TabPane("structures"):
-                for child in self.section_children:
-                    yield child
-            with TabPane("raw"):
-                # TODO: fixup addresses to VA vs file offset
-                yield HexView(self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="section-hexview")
+        for child in self.section_children:
+            yield child
+
+        yield BinaryView(self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="sectionview--binaryview")
 
 
 class SegmentView(Static):
@@ -898,8 +955,7 @@ class SegmentView(Static):
             margin-left: 1;
         }
 
-        SegmentView > HexView {
-            height: 32;
+        SegmentView .segmentview--binaryview {
         }
     """
 
@@ -931,13 +987,11 @@ class SegmentView(Static):
 
         yield Static(table, classes="segmentview--table")
 
-        with TabbedContent():
-            with TabPane("structures"):
-                for child in self.segment_children:
-                    yield child
-            with TabPane("raw"):
-                # TODO: fixup addresses to VA vs file offset
-                yield HexView(self.ctx, self.address, self.length)
+
+        for child in self.segment_children:
+            yield child
+
+        yield BinaryView(self.ctx, self.address, self.length, classes="segmentview--binaryview")
 
 
 class PEApp(App):
@@ -963,10 +1017,6 @@ class PEApp(App):
             /* margin: 0 on all sides but top */
             margin: 0;
             margin-top: 1;
-        }
-
-        .section-hexview {
-            height: 30;
         }
     """
 
