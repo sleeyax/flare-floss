@@ -76,6 +76,10 @@ class Line(Horizontal):
 
 class MetadataView(Static):
     DEFAULT_CSS = """
+        MetadataView {
+            height: auto;
+        }
+
         MetadataView .metadataview--title {
             color: $secondary;
         }
@@ -91,7 +95,6 @@ class MetadataView(Static):
 
     def __init__(self, ctx: Context, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_class("pe-pane")
 
         self.ctx = ctx
 
@@ -178,7 +181,6 @@ class HexView(ScrollView):
             raise ValueError("row_length must be > 0")
 
         super().__init__(*args, **kwargs)
-        self.add_class("pe-pane")
 
         self.ctx = ctx
         self.address = address
@@ -322,7 +324,7 @@ class HexTestView(Widget):
 
     def __init__(self, ctx: Context, *args, **kwargs):
         super().__init__()
-        self.add_class("pe-pane")
+        self.add_class("peapp--pane")
 
         self.ctx = ctx
 
@@ -378,11 +380,14 @@ class HexTestView(Widget):
 
 class StringsView(VerticalScroll):
     DEFAULT_CSS = """
+        StringsView {
+            /* let the container set our size */
+            height: auto;
+        }
     """
 
     def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
         super().__init__()
-        self.add_class("pe-pane")
 
         self.ctx = ctx
         self.address = address
@@ -417,11 +422,15 @@ class BinaryView(Widget):
         BinaryView HexView {
             height: 16;
         }
+
+        BinaryView TabPane {
+            padding: 0;
+            padding-left: 2;
+        }
     """
 
     def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
-        super().__init__()
-        self.add_class("pe-pane")
+        super().__init__(*args, **kwargs)
 
         self.ctx = ctx
         self.address = address
@@ -429,11 +438,10 @@ class BinaryView(Widget):
 
     def compose(self) -> ComposeResult:
         with TabbedContent():
-            with TabPane("strings", classes="tab"):
-                yield StringsView(self.ctx, self.address, self.length, classes="strings")
-            with TabPane("raw", classes="tab"):
-                yield HexView(self.ctx, self.address, self.length, classes="strings")
-
+            with TabPane("data"):
+                yield HexView(self.ctx, self.address, self.length)
+            with TabPane("strings"):
+                yield StringsView(self.ctx, self.address, self.length)
 
 STRUCTURES = """
     struct IMAGE_DOS_HEADER {               // DOS .EXE header
@@ -654,7 +662,6 @@ class StructureView(Widget):
 
     def __init__(self, ctx: Context, address: int, typename: str, name: Optional[str] = None, *args, **kwargs):
         super().__init__(name=name, *args, **kwargs)
-        self.add_class("pe-pane")
 
         self.ctx = ctx
         self.address = address
@@ -863,6 +870,10 @@ class SectionView(Static):
     }
 
     DEFAULT_CSS = """
+        SectionView {
+            height: auto;
+        }
+
         SectionView .sectionview--title {
             color: $secondary;
         }
@@ -889,7 +900,6 @@ class SectionView(Static):
 
     def __init__(self, ctx: Context, section: pefile.SectionStructure, section_children: List[Widget] = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_class("pe-pane")
 
         self.ctx = ctx
         self.section = section
@@ -924,7 +934,7 @@ class SectionView(Static):
         for child in self.section_children:
             yield child
 
-        yield BinaryView(self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="sectionview--binaryview")
+        yield BinaryView(self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="peapp--pane")
 
 
 class SegmentView(Static):
@@ -935,6 +945,10 @@ class SegmentView(Static):
     }
 
     DEFAULT_CSS = """
+        SegmentView {
+            height: auto;
+        }
+
         SegmentView .segmentview--title {
             color: $secondary;
         }
@@ -954,14 +968,10 @@ class SegmentView(Static):
         SegmentView .segmentview--table {
             margin-left: 1;
         }
-
-        SegmentView .segmentview--binaryview {
-        }
     """
 
     def __init__(self, ctx: Context, segment: str, address: int, length: int, segment_children: List[Widget] = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_class("pe-pane")
 
         self.ctx = ctx
         self.segment = segment
@@ -991,7 +1001,7 @@ class SegmentView(Static):
         for child in self.segment_children:
             yield child
 
-        yield BinaryView(self.ctx, self.address, self.length, classes="segmentview--binaryview")
+        yield BinaryView(self.ctx, self.address, self.length, classes="peapp--pane")
 
 
 class PEApp(App):
@@ -999,7 +1009,7 @@ class PEApp(App):
 
     TITLE = "pe"
     DEFAULT_CSS = """
-        .pe-pane {
+        .peapp--pane {
             /* appear as a new layer on top of the screen */
             background: $boost;
 
@@ -1122,7 +1132,9 @@ class PEApp(App):
         return regions
 
     def compose(self) -> ComposeResult:
-        yield MetadataView(self.ctx)
+        yield MetadataView(self.ctx, classes="peapp--pane")
+
+        yield BinaryView(self.ctx, 0x0, 0x10000, classes="peapp--pane")
 
         # sections
         # TODO: imports
@@ -1133,7 +1145,7 @@ class PEApp(App):
         regions = self.compute_file_regions()
         for i, region in enumerate(regions):
             children = [
-                StructureView(self.ctx, *child) for child in region.children
+                StructureView(self.ctx, *child, classes="peapp--pane") for child in region.children
             ]
 
             if region.type == "segment":
@@ -1145,10 +1157,10 @@ class PEApp(App):
                     name = "gap"
 
                 # TODO: if segment is all NULLs, don't show it (header/gap/overlay)
-                yield SegmentView(self.ctx, name, region.address, region.length, segment_children=children)
+                yield SegmentView(self.ctx, name, region.address, region.length, segment_children=children, classes="peapp--pane")
 
             elif region.type == "section":
-                yield SectionView(self.ctx, region.section, section_children=children)
+                yield SectionView(self.ctx, region.section, section_children=children, classes="peapp--pane")
 
             else:
                 raise ValueError(f"unknown region type: {region.type}")
