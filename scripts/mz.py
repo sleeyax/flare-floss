@@ -446,6 +446,10 @@ class BinaryView(Widget):
             height: auto;
         }
 
+        BinaryView > Label {
+            color: $text-muted;
+        }
+
         /* i haven't figured out the right pattern to use here */
         /* we have to explicitly set these widgets size,       */
         /* i think because the HexView is line-based.          */
@@ -469,10 +473,11 @@ class BinaryView(Widget):
         self.length = length
 
     def compose(self) -> ComposeResult:
+        yield Label("data:")
         with TabbedContent():
             with TabPane("strings"):
                 yield StringsView(self.ctx, self.address, self.length)
-            with TabPane("data"):
+            with TabPane("hex"):
                 yield HexView(self.ctx, self.address, self.length)
 
 
@@ -1002,12 +1007,14 @@ class SectionView(Static):
         self.section = section
         self.section_children = section_children or []
 
-    def compose(self) -> ComposeResult:
+    @property
+    def section_name(self) -> str:
         try:
-            name = self.section.Name.partition(b"\x00")[0].decode("ascii")
+            return self.section.Name.partition(b"\x00")[0].decode("ascii")
         except UnicodeDecodeError:
-            name = "(invalid)"
+            return "(invalid)"
 
+    def compose(self) -> ComposeResult:
         raw_address = self.section.get_PointerToRawData_adj()
         raw_size = self.section.SizeOfRawData
 
@@ -1016,7 +1023,7 @@ class SectionView(Static):
         virtual_size = self.section.Misc_VirtualSize
 
         yield Line(
-            Static(name, classes="sectionview--title"),
+            Static(self.section_name, classes="sectionview--title"),
             Static(" section", classes="sectionview--decoration"),
             Static(" @ ", classes="sectionview--decoration"),
             Static(f"{raw_address:08x}-{raw_address + raw_size:08x}", classes="sectionview--decoration"),
@@ -1119,6 +1126,77 @@ class SegmentView(Static):
             yield child
 
         yield BinaryView(self.ctx, self.address, self.length, classes="peapp--pane")
+
+
+class NavView(Static):
+    """"""
+    DEFAULT_CSS = """
+        NavView {
+            height: 100%;
+            width: 28;
+            dock: left;
+
+            border-right: tall $background;
+
+            background: $boost;
+
+            border-right: tall $background;
+            border-top: tall $background;
+            border-bottom: tall $background;
+
+            /* padding: inside the bounding box */
+            padding: 0 1;
+
+            /* margin: outside the bounding box */
+            margin: 0;
+            margin-right: 1;
+            margin-top: 1;
+            margin-bottom: 1;
+
+            link-style: none;
+            link-color: $text-muted;
+        }
+    """
+
+    def __init__(
+        self,
+        ctx: Context,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.ctx = ctx
+
+    def action_navigate_to(self, id: str):
+        self.parent.query_one(f"#{id}").scroll_visible()
+
+    def render(self) -> str:
+        lines = []
+
+        for sibling in self.siblings:
+            if isinstance(sibling, MetadataView):
+                lines.append(f"[@click=navigate_to('{sibling.id}')]metadata[/]")
+                children = []
+
+            elif isinstance(sibling, SegmentView):
+                lines.append(f"[@click=navigate_to('{sibling.id}')]{sibling.segment} segment[/]")
+                children = sibling.segment_children
+
+            elif isinstance(sibling, SectionView):
+                lines.append(f"[@click=navigate_to('{sibling.id}')]{sibling.section_name} section[/]")
+                children = sibling.section_children
+
+            else:
+                raise ValueError("unknown sibling type: " + str(type(sibling)))
+
+            for child in children:
+                if isinstance(child, StructureView):
+                    child_name = (child.name or child.type.name).replace("IMAGE_", "")
+                    lines.append(f"  [@click=navigate_to('{child.id}')]{child_name}[/]")
+                else:
+                    raise ValueError("unknown child type: " + str(type(child)))
+
+        return "\n".join(lines)
 
 
 class PEApp(App):
@@ -1251,7 +1329,10 @@ class PEApp(App):
         return tuple(regions)
 
     def compose(self) -> ComposeResult:
-        yield MetadataView(self.ctx, classes="peapp--pane")
+        id_generator = map(lambda i: f"id-{i}", range(1000))
+
+        yield NavView(self.ctx, id=next(id_generator))
+        yield MetadataView(self.ctx, classes="peapp--pane", id=next(id_generator))
 
         # sections
         # TODO: imports
@@ -1261,7 +1342,7 @@ class PEApp(App):
 
         regions = self.compute_file_regions()
         for i, region in enumerate(regions):
-            children = [StructureView(self.ctx, *child, classes="peapp--pane") for child in region.children]
+            children = [StructureView(self.ctx, *child, classes="peapp--pane", id=next(id_generator)) for child in region.children]
 
             if region.type == "segment":
                 if i == 0:
@@ -1273,11 +1354,11 @@ class PEApp(App):
 
                 # TODO: if segment is all NULLs, don't show it (header/gap/overlay)
                 yield SegmentView(
-                    self.ctx, name, region.address, region.length, segment_children=children, classes="peapp--pane"
+                    self.ctx, name, region.address, region.length, segment_children=children, classes="peapp--pane", id=next(id_generator)
                 )
 
             elif region.type == "section":
-                yield SectionView(self.ctx, region.section, section_children=children, classes="peapp--pane")
+                yield SectionView(self.ctx, region.section, section_children=children, classes="peapp--pane", id=next(id_generator))
 
             else:
                 raise ValueError(f"unknown region type: {region.type}")
