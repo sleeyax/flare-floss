@@ -139,7 +139,6 @@ class HexView(ScrollView):
     # TODO: label/title
     # TODO: make this width the application global width?
     # TODO: make it easy to copy from
-    # TODO: strings
 
     # refer directly to line api documentation here:
     # https://textual.textualize.io/guide/widgets/#line-api
@@ -398,6 +397,12 @@ class HexTestView(Widget):
 
 
 class StringsView(VerticalScroll):
+    COMPONENT_CLASSES = {
+        "stringsview--address",
+        "stringsview--flavor",
+        "stringsview--decoration",
+    }
+
     DEFAULT_CSS = """
         StringsView {
             /* let the container set our size */
@@ -411,10 +416,14 @@ class StringsView(VerticalScroll):
         StringsView .stringsview--flavor {
             color: $text-muted;
         }
+
+        StringsView .stringsview--decoration {
+            color: $text-muted;
+        }
     """
 
     def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
-        super().__init__()
+        super().__init__(*args, **kwargs)
 
         self.ctx = ctx
         self.address = address
@@ -422,6 +431,29 @@ class StringsView(VerticalScroll):
 
     def compose(self) -> ComposeResult:
         buf = self.ctx.buf[self.address : self.address + self.length]
+
+        address_style = self.get_component_rich_style("stringsview--address")
+        flavor_style = self.get_component_rich_style("stringsview--flavor")
+        decoration_style = self.get_component_rich_style("stringsview--decoration")
+
+        has_strings = False
+        t = Text()
+        for s in sorted(
+            itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset
+        ):
+            t.append(f"{self.address + s.offset:08x}: ", style=address_style)
+            t.append("ascii: " if s.flavor == "ascii" else "utf16: ", style=flavor_style)
+            t.append(s.s)
+            t.append("\n")
+            has_strings = True
+
+        if not has_strings:
+            t.append("(none)", style=decoration_style)
+
+        yield Static(t)
+        return
+
+
 
         for s in sorted(
             itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset
@@ -1181,6 +1213,10 @@ class ImportsView(Static):
             color: $secondary;
         }
 
+        ImportsView .importsview--heading {
+            color: $accent;
+        }
+
         ImportsView .importsview--dll {
             color: $accent;
         }
@@ -1207,6 +1243,13 @@ class ImportsView(Static):
 
     def compose(self) -> ComposeResult:
         yield Line(Static("import directory table:", classes="importsview--title"))
+
+        yield Line(
+            Static("  imphash:      ", classes="importsview--heading"),
+            Static(self.ctx.pe.get_imphash()),
+        )
+
+        yield Line()
 
         for dll in self.ctx.pe.DIRECTORY_ENTRY_IMPORT:
             dll_name = dll.dll.decode("ascii")
