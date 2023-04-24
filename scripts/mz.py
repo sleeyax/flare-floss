@@ -1193,7 +1193,7 @@ class ImportsView(Static):
             color: $text-muted;
         }
     """
- 
+
     def __init__(
         self,
         ctx: Context,
@@ -1252,7 +1252,7 @@ class ExportsView(Static):
             color: $text-muted;
         }
     """
- 
+
     def __init__(
         self,
         ctx: Context,
@@ -1273,7 +1273,6 @@ class ExportsView(Static):
             )
 
         else:
-
             try:
                 dll_name = self.ctx.pe.DIRECTORY_ENTRY_EXPORT.name.partition(b"\x00")[0].decode("ascii")
             except UnicodeDecodeError:
@@ -1302,6 +1301,7 @@ class ExportsView(Static):
 
 class NavView(Static):
     """"""
+
     DEFAULT_CSS = """
         NavView {
             height: 100%;
@@ -1533,7 +1533,9 @@ class PEApp(App):
                 elif type == "DIRECTORY_ENTRY_EXPORT":
                     children.append(ExportsView(self.ctx, offset, classes="peapp--pane", id=next(id_generator)))
                 else:
-                    children.append(StructureView(self.ctx, offset, type, name, classes="peapp--pane", id=next(id_generator)))
+                    children.append(
+                        StructureView(self.ctx, offset, type, name, classes="peapp--pane", id=next(id_generator))
+                    )
 
             if region.type == "segment":
                 if i == 0:
@@ -1543,16 +1545,24 @@ class PEApp(App):
                 else:
                     name = "gap"
 
-                if self.ctx.buf[region.address:region.end].count(0) == region.length:
+                if self.ctx.buf[region.address : region.end].count(0) == region.length:
                     # if segment is all NULLs, don't show it (header/gap/overlay)
                     continue
 
                 yield SegmentView(
-                    self.ctx, name, region.address, region.length, segment_children=children, classes="peapp--pane", id=next(id_generator)
+                    self.ctx,
+                    name,
+                    region.address,
+                    region.length,
+                    segment_children=children,
+                    classes="peapp--pane",
+                    id=next(id_generator),
                 )
 
             elif region.type == "section":
-                yield SectionView(self.ctx, region.section, section_children=children, classes="peapp--pane", id=next(id_generator))
+                yield SectionView(
+                    self.ctx, region.section, section_children=children, classes="peapp--pane", id=next(id_generator)
+                )
 
             else:
                 raise ValueError(f"unknown region type: {region.type}")
