@@ -12,8 +12,6 @@
 """
 import os
 import re
-from collections import namedtuple
-import itertools
 import sys
 import mmap
 import asyncio
@@ -21,22 +19,25 @@ import logging
 import pathlib
 import argparse
 import textwrap
-from typing import Any, Dict, List, Callable, Tuple, Optional, Literal, Iterable
-from dataclasses import dataclass, field
+import itertools
+import dataclasses
+from typing import Any, List, Tuple, Literal, Mapping, Callable, Iterable, Optional, Sequence
+from dataclasses import dataclass
 
 import pefile
+import rich.table
 from dissect import cstruct
 from textual import events
 from rich.text import Text
-import rich.table
 from textual.app import App, ComposeResult
 from rich.segment import Segment
 from textual.strip import Strip
 from textual.widget import Widget
 from textual.logging import TextualHandler
-from textual.widgets import Label, Header, Static, TabbedContent, TabPane
+from textual.widgets import Label, Static, TabPane, TabbedContent
 from textual.geometry import Size
-from textual.containers import Horizontal, Container, VerticalScroll
+from textual.reactive import reactive
+from textual.containers import Horizontal, VerticalScroll
 from textual.scroll_view import ScrollView
 from dissect.cstruct.types.enum import EnumInstance
 
@@ -49,7 +50,7 @@ class Context:
     buf: bytearray
     pe: pefile.PE
     cparser: cstruct.cstruct
-    renderers: Dict[str, Callable[[Any], str]]
+    renderers: Mapping[str, Callable[[Any], str]]
 
     @property
     def bitness(self):
@@ -109,12 +110,12 @@ class MetadataView(Static):
     def compose(self) -> ComposeResult:
         yield Label("metadata:", classes="metadataview--title")
         yield Line(
-            Static(f"  name: ", classes="metadataview--key"),
+            Static("  name: ", classes="metadataview--key"),
             Static(self.ctx.path.name, classes="metadataview--value"),
         )
         yield Line(
-            Static(f"  size: ", classes="metadataview--key"),
-            Static(hex(len(self.ctx.buf)), classes="metadataview--value")
+            Static("  size: ", classes="metadataview--key"),
+            Static(hex(len(self.ctx.buf)), classes="metadataview--value"),
         )
 
         warnings = self.ctx.pe.get_warnings()
@@ -410,19 +411,22 @@ class StringsView(VerticalScroll):
         self.length = length
 
     def compose(self) -> ComposeResult:
-        buf = self.ctx.buf[self.address:self.address + self.length]
+        buf = self.ctx.buf[self.address : self.address + self.length]
 
-        for s in sorted(itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset):
+        for s in sorted(
+            itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset
+        ):
             string_classes = [
-                f"stringsview--{s.flavor}",
-                f"stringsview--string",
+                "stringsview--" + s.flavor,
+                "stringsview--string",
             ]
 
             yield Line(
                 Static(f"{self.address + s.offset:08x}:", classes="stringsview--address"),
                 Static(" ascii: " if s.flavor == "ascii" else " utf16: ", classes="stringsview--flavor"),
-                Static(s.s, classes=" ".join(string_classes))
+                Static(s.s, classes=" ".join(string_classes)),
             )
+
 
 class BinaryView(Widget):
     DEFAULT_CSS = """
@@ -459,6 +463,7 @@ class BinaryView(Widget):
                 yield HexView(self.ctx, self.address, self.length)
             with TabPane("strings"):
                 yield StringsView(self.ctx, self.address, self.length)
+
 
 STRUCTURES = """
     struct IMAGE_DOS_HEADER {               // DOS .EXE header
@@ -682,11 +687,11 @@ class StructureView(Widget):
 
         self.ctx = ctx
         self.address = address
-        #self.name = name
+        # self.name = name
 
         self.type = self.ctx.cparser.typedefs[typename]
 
-        buf = self.ctx.buf[self.address:self.address + self.type.size]
+        buf = self.ctx.buf[self.address : self.address + self.type.size]
         self.structure = self.type(buf)
 
     def compose(self) -> ComposeResult:
@@ -694,7 +699,7 @@ class StructureView(Widget):
             # like: struct IMAGE_DOS_HEADER {
             Static("struct ", classes="structureview--field-decoration"),
             Static(self.name or self.type.name, classes="structureview--struct-name"),
-            Static(" {", classes="structureview--field-decoration")
+            Static(" {", classes="structureview--field-decoration"),
         )
 
         # use a table for formatting the structure fields,
@@ -738,10 +743,8 @@ class StructureView(Widget):
 
         yield Static(table, classes="fields")
 
-        yield Line(
-            Static("}", classes="structureview--field-decoration")
-        )
- 
+        yield Line(Static("}", classes="structureview--field-decoration"))
+
 
 def render_timestamp(v: int) -> str:
     import datetime
@@ -841,7 +844,7 @@ def buf_filled_with(buf, character):
     return True
 
 
-def extract_ascii_strings(buf: bytes, n: int=4) -> Iterable[String]:
+def extract_ascii_strings(buf: bytes, n: int = 4) -> Iterable[String]:
     """Extract ASCII strings from the given binary data."""
 
     if not buf:
@@ -860,7 +863,7 @@ def extract_ascii_strings(buf: bytes, n: int=4) -> Iterable[String]:
         yield String(match.group().decode("ascii"), match.start(), "ascii")
 
 
-def extract_unicode_strings(buf: bytes, n: int=4) -> Iterable[String]:
+def extract_unicode_strings(buf: bytes, n: int = 4) -> Iterable[String]:
     """Extract naive UTF-16 strings from the given binary data."""
 
     if not buf:
@@ -916,7 +919,14 @@ class SectionView(Static):
         }
     """
 
-    def __init__(self, ctx: Context, section: pefile.SectionStructure, section_children: List[Widget] = None, *args, **kwargs):
+    def __init__(
+        self,
+        ctx: Context,
+        section: pefile.SectionStructure,
+        section_children: Optional[Sequence[Widget]] = None,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
 
         self.ctx = ctx
@@ -952,11 +962,14 @@ class SectionView(Static):
         for child in self.section_children:
             yield child
 
-        yield BinaryView(self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="peapp--pane")
+        yield BinaryView(
+            self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="peapp--pane"
+        )
 
 
 class SegmentView(Static):
     """a view used for regions of the file not covered by a section"""
+
     COMPONENT_CLASSES = {
         "segmentview--key",
         "segmentview--value",
@@ -988,7 +1001,16 @@ class SegmentView(Static):
         }
     """
 
-    def __init__(self, ctx: Context, segment: str, address: int, length: int, segment_children: List[Widget] = None, *args, **kwargs):
+    def __init__(
+        self,
+        ctx: Context,
+        segment: str,
+        address: int,
+        length: int,
+        segment_children: Optional[Sequence[Widget]] = None,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
 
         self.ctx = ctx
@@ -1014,7 +1036,6 @@ class SegmentView(Static):
         table.add_row("size:", hex(self.length))
 
         yield Static(table, classes="segmentview--table")
-
 
         for child in self.segment_children:
             yield child
@@ -1079,7 +1100,7 @@ class PEApp(App):
         length: int
         type: Literal["segment"] | Literal["section"]
         section: Optional[pefile.SectionStructure] = None
-        children: List[Any] = field(default_factory=list)
+        children: List[Any] = dataclasses.field(default_factory=list)
 
         @property
         def end(self) -> int:
@@ -1105,20 +1126,13 @@ class PEApp(App):
 
             # TODO: don't actually show these
             # show maybe as hex view
-            yield (directory.get_file_offset(), f"IMAGE_DATA_DIRECTORY", name)
+            yield (directory.get_file_offset(), "IMAGE_DATA_DIRECTORY", name)
 
-    def compute_file_regions(self) -> Tuple[Region]:
+    def compute_file_regions(self) -> Tuple[Region, ...]:
         regions = []
 
         for section in sorted(self.ctx.pe.sections, key=lambda s: s.PointerToRawData):
-            regions.append(
-                self.Region(
-                    section.get_PointerToRawData_adj(),
-                    section.SizeOfRawData,
-                    "section",
-                    section
-                )
-            )
+            regions.append(self.Region(section.get_PointerToRawData_adj(), section.SizeOfRawData, "section", section))
 
         # segment that contains all data until the first section
         regions.insert(0, self.Region(0, regions[0].address, "segment"))
@@ -1147,7 +1161,7 @@ class PEApp(App):
                     region.children.append(structure)
                     break
 
-        return regions
+        return tuple(regions)
 
     def compose(self) -> ComposeResult:
         yield MetadataView(self.ctx, classes="peapp--pane")
@@ -1160,9 +1174,7 @@ class PEApp(App):
 
         regions = self.compute_file_regions()
         for i, region in enumerate(regions):
-            children = [
-                StructureView(self.ctx, *child, classes="peapp--pane") for child in region.children
-            ]
+            children = [StructureView(self.ctx, *child, classes="peapp--pane") for child in region.children]
 
             if region.type == "segment":
                 if i == 0:
@@ -1173,7 +1185,9 @@ class PEApp(App):
                     name = "gap"
 
                 # TODO: if segment is all NULLs, don't show it (header/gap/overlay)
-                yield SegmentView(self.ctx, name, region.address, region.length, segment_children=children, classes="peapp--pane")
+                yield SegmentView(
+                    self.ctx, name, region.address, region.length, segment_children=children, classes="peapp--pane"
+                )
 
             elif region.type == "section":
                 yield SectionView(self.ctx, region.section, section_children=children, classes="peapp--pane")
