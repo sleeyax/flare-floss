@@ -3,9 +3,8 @@
     "rich==13.3.3",
     "dissect.cstruct==3.6",
 
-
     TODO:
-      - nav sidebar/tree
+      - other structures
       - structure & hexview side by side
       - on hover structure highlight the hex
 """
@@ -1128,6 +1127,111 @@ class SegmentView(Static):
         yield BinaryView(self.ctx, self.address, self.length, classes="peapp--pane")
 
 
+class ImportsView(Static):
+    DEFAULT_CSS = """
+        ImportsView {
+            height: auto;
+        }
+
+        ImportsView .importsview--title {
+            color: $secondary;
+        }
+
+        ImportsView .importsview--dll {
+            color: $accent;
+        }
+
+        ImportsView .importsview--symbol {
+            color: $text;
+        }
+
+        ImportsView .importsview--decoration {
+            color: $text-muted;
+        }
+    """
+ 
+    def __init__(
+        self,
+        ctx: Context,
+        address: int,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.ctx = ctx
+        self.address = address
+
+    def compose(self) -> ComposeResult:
+        yield Line(Static("import directory table:", classes="importsview--title"))
+
+        for dll in self.ctx.pe.DIRECTORY_ENTRY_IMPORT:
+            dll_name = dll.dll.decode("ascii")
+
+            yield Line(
+                Static("  "),
+                Static(dll_name, classes="importsview--dll"),
+                Static(":", classes="importsview--decoration"),
+            )
+
+            for entry in dll.imports:
+                if entry.name is None:
+                    # TODO: render ordinal
+                    continue
+
+                else:
+                    symbol_name = entry.name.decode("ascii")
+                    yield Line(
+                        Static("    "),
+                        Static(symbol_name, classes="importsview--symbol"),
+                    )
+
+
+class ExportsView(Static):
+    DEFAULT_CSS = """
+        ExportsView {
+            height: auto;
+        }
+
+        ExportsView .exportsview--title {
+            color: $secondary;
+        }
+
+        ExportsView .exportsview--heading {
+            color: $accent;
+        }
+
+        ExportsView .exportsview--symbol {
+            color: $text;
+        }
+
+        ExportsView .exportsview--decoration {
+            color: $text-muted;
+        }
+    """
+ 
+    def __init__(
+        self,
+        ctx: Context,
+        address: int,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.ctx = ctx
+        self.address = address
+
+    def compose(self) -> ComposeResult:
+        yield Line(Static("export directory table:", classes="exportsview--title"))
+        yield Line(Static("  symbols:", classes="exportsview--heading"))
+
+        for entry in self.ctx.pe.DIRECTORY_ENTRY_EXPORT.symbols:
+            symbol_name = entry.name.decode("ascii")
+            yield Line(
+                Static("    "),
+                Static(symbol_name, classes="exportsview--symbol"),
+            )
+
+
 class NavView(Static):
     """"""
     DEFAULT_CSS = """
@@ -1175,33 +1279,35 @@ class NavView(Static):
 
         for sibling in self.siblings:
             if isinstance(sibling, MetadataView):
-                lines.append(f"[@click=navigate_to('{sibling.id}')]metadata[/]")
+                sibling_name = "metadata"
                 children = []
-
             elif isinstance(sibling, SegmentView):
-                lines.append(f"[@click=navigate_to('{sibling.id}')]{sibling.segment} segment[/]")
+                sibling_name = f"{sibling.segment} segment"
                 children = sibling.segment_children
-
             elif isinstance(sibling, SectionView):
-                lines.append(f"[@click=navigate_to('{sibling.id}')]{sibling.section_name} section[/]")
+                sibling_name = f"{sibling.section_name} section"
                 children = sibling.section_children
-
             else:
                 raise ValueError("unknown sibling type: " + str(type(sibling)))
+
+            lines.append(f"[@click=navigate_to('{sibling.id}')]{sibling_name}[/]")
 
             for child in children:
                 if isinstance(child, StructureView):
                     child_name = (child.name or child.type.name).replace("IMAGE_", "")
-                    lines.append(f"  [@click=navigate_to('{child.id}')]{child_name}[/]")
+                elif isinstance(child, ImportsView):
+                    child_name = "import table"
+                elif isinstance(child, ExportsView):
+                    child_name = "export table"
                 else:
                     raise ValueError("unknown child type: " + str(type(child)))
+
+                lines.append(f"  [@click=navigate_to('{child.id}')]{child_name}[/]")
 
         return "\n".join(lines)
 
 
 class PEApp(App):
-    # TODO: how does the app layout when there are hundreds of hex views, each with thousands of lines?
-
     TITLE = "pe"
     DEFAULT_CSS = """
         .peapp--pane {
@@ -1289,9 +1395,19 @@ class PEApp(App):
             enum = self.ctx.cparser.typedefs["IMAGE_DIRECTORY_ENTRY"]
             name = enum.reverse[i]
 
-            # TODO: don't actually show these
-            # show maybe as hex view
-            yield (directory.get_file_offset(), "IMAGE_DATA_DIRECTORY", name)
+            directory_offset = self.ctx.pe.get_offset_from_rva(directory.VirtualAddress)
+
+            if name == "IMAGE_DIRECTORY_ENTRY_IMPORT":
+                yield (directory_offset, "DIRECTORY_ENTRY_IMPORT", None)
+
+            elif name == "IMAGE_DIRECTORY_ENTRY_EXPORT":
+                yield (directory_offset, "DIRECTORY_ENTRY_EXPORT", None)
+
+            # DIRECTORY_ENTRY_RESOURCE (ResourceDirData instance)
+            # DIRECTORY_ENTRY_DEBUG (list of DebugData instances)
+            # DIRECTORY_ENTRY_BASERELOC (list of BaseRelocationData instances)
+            # DIRECTORY_ENTRY_TLS
+            # DIRECTORY_ENTRY_BOUND_IMPORT (list of BoundImportData instances)
 
     def compute_file_regions(self) -> Tuple[Region, ...]:
         regions = []
@@ -1335,14 +1451,21 @@ class PEApp(App):
         yield MetadataView(self.ctx, classes="peapp--pane", id=next(id_generator))
 
         # sections
-        # TODO: imports
-        # TODO: exports
         # TODO: rich header (hex, parsed)
         # TODO: resources
 
         regions = self.compute_file_regions()
         for i, region in enumerate(regions):
-            children = [StructureView(self.ctx, *child, classes="peapp--pane", id=next(id_generator)) for child in region.children]
+            children = []
+
+            for child in region.children:
+                offset, type, name = child
+                if type == "DIRECTORY_ENTRY_IMPORT":
+                    children.append(ImportsView(self.ctx, offset, classes="peapp--pane", id=next(id_generator)))
+                elif type == "DIRECTORY_ENTRY_EXPORT":
+                    children.append(ExportsView(self.ctx, offset, classes="peapp--pane", id=next(id_generator)))
+                else:
+                    children.append(StructureView(self.ctx, offset, type, name, classes="peapp--pane", id=next(id_generator)))
 
             if region.type == "segment":
                 if i == 0:
@@ -1352,7 +1475,10 @@ class PEApp(App):
                 else:
                     name = "gap"
 
-                # TODO: if segment is all NULLs, don't show it (header/gap/overlay)
+                if self.ctx.buf[region.address:region.end].count(0) == region.length:
+                    # if segment is all NULLs, don't show it (header/gap/overlay)
+                    continue
+
                 yield SegmentView(
                     self.ctx, name, region.address, region.length, segment_children=children, classes="peapp--pane", id=next(id_generator)
                 )
