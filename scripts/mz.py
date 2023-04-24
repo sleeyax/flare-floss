@@ -1008,11 +1008,18 @@ class SectionView(Static):
         except UnicodeDecodeError:
             name = "(invalid)"
 
+        raw_address = self.section.get_PointerToRawData_adj()
+        raw_size = self.section.SizeOfRawData
+
+        base_address = self.ctx.pe.OPTIONAL_HEADER.ImageBase
+        virtual_address = base_address + self.section.get_VirtualAddress_adj()
+        virtual_size = self.section.Misc_VirtualSize
+
         yield Line(
             Static(name, classes="sectionview--title"),
             Static(" section", classes="sectionview--decoration"),
             Static(" @ ", classes="sectionview--decoration"),
-            Static(f"{self.section.get_PointerToRawData_adj():#08x}", classes="sectionview--decoration"),
+            Static(f"{raw_address:08x}-{raw_address + raw_size:08x}", classes="sectionview--decoration"),
             Static(":", classes="sectionview--decoration"),
         )
 
@@ -1024,12 +1031,12 @@ class SectionView(Static):
         table.add_column("key", style=style_key)
         table.add_column("value", style=style_value)
 
-        table.add_row("size:", hex(self.section.SizeOfRawData) + " / " + hex(self.section.Misc_VirtualSize))
-        # TODO: rstrip the section data before computing entropy
+        table.add_row("virtual address:", f"{virtual_address:08x}")
+        table.add_row("virtual size:", f"{virtual_size:#x}")
+        # rstrip the section data before computing entropy
         # otherwise the padding biases the results.
-        table.add_row("entropy:", "%.02f" % self.section.get_entropy())
-        table.add_row("md5:", self.section.get_hash_md5())
-        table.add_row("sha256:", self.section.get_hash_sha256())
+        entropy = self.section.entropy_H(self.section.get_data().rstrip(b"\x00"))
+        table.add_row("entropy:", "%.02f" % entropy)
 
         yield Static(table, classes="sectionview--table")
 
@@ -1102,9 +1109,9 @@ class SegmentView(Static):
             Static(self.segment, classes="segmentview--title"),
             Static(" segment", classes="segmentview--decoration"),
             Static(" @ ", classes="segmentview--decoration"),
-            Static(f"{self.address:#08x}", classes="segmentview--decoration"),
-            Static(" size=", classes="segmentview--decoration"),
-            Static(f"{self.length:#x}", classes="segmentview--decoration"),
+            Static(f"{self.address:08x}", classes="segmentview--decoration"),
+            Static("-", classes="segmentview--decoration"),
+            Static(f"{self.address + self.length:08x}", classes="segmentview--decoration"),
             Static(":", classes="segmentview--decoration"),
         )
 
