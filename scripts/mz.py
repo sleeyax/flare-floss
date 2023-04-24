@@ -6,7 +6,6 @@
 
     TODO:
       - nav sidebar/tree
-      - click to expand structures from summary to full details
       - structure & hexview side by side
       - on hover structure highlight the hex
 """
@@ -21,10 +20,11 @@ import argparse
 import textwrap
 import itertools
 import dataclasses
-from typing import Any, List, Tuple, Literal, Mapping, Callable, Iterable, Optional, Sequence
+from typing import Any, List, Set, Tuple, Literal, Mapping, Callable, Iterable, Optional, Sequence
 from dataclasses import dataclass
 
 import pefile
+import rich.console
 import rich.table
 from dissect import cstruct
 from textual import events
@@ -50,7 +50,18 @@ class Context:
     buf: bytearray
     pe: pefile.PE
     cparser: cstruct.cstruct
+
+    # specialized renderers for fields parsed by cstruct, 
+    # such as timestamp from number of seconds.
+    #
+    # maps from {structure name}.{field name} to a renderer.
+    # def render(field: Any) -> str: ...
     renderers: Mapping[str, Callable[[Any], str]]
+
+    # the fields to show when a structure is minimized.
+    #
+    # maps from structure name to a set of field names.
+    key_fields: Mapping[str, Set[str]]
 
     @property
     def bitness(self):
@@ -441,7 +452,7 @@ class BinaryView(Widget):
         /* the container is welcomed to override these sizes.  */
         BinaryView StringsView,
         BinaryView HexView {
-            height: 16;
+            max-height: 32;
         }
 
         BinaryView TabPane {
@@ -641,6 +652,7 @@ STRUCTURES = """
 
 class StructureView(Widget):
     COMPONENT_CLASSES = {
+        "structureview--struct-name",
         "structureview--field-name",
         "structureview--field-type",
         "structureview--field-offset",
@@ -677,10 +689,20 @@ class StructureView(Widget):
           color: $text;
         }
 
+        StructureView.structureview--is-minimized .structureview--field-value {
+          color: red;
+        }
+
+        StructureView.structureview--is-minimized .structureview--field-value {
+          color: blue;
+        }
+
         StructureView .structureview--field-decoration {
           color: $text-muted;
         }
     """
+
+    is_minimized = reactive(True, layout=True)
 
     def __init__(self, ctx: Context, address: int, typename: str, name: Optional[str] = None, *args, **kwargs):
         super().__init__(name=name, *args, **kwargs)
@@ -694,13 +716,23 @@ class StructureView(Widget):
         buf = self.ctx.buf[self.address : self.address + self.type.size]
         self.structure = self.type(buf)
 
-    def compose(self) -> ComposeResult:
-        yield Line(
-            # like: struct IMAGE_DOS_HEADER {
-            Static("struct ", classes="structureview--field-decoration"),
-            Static(self.name or self.type.name, classes="structureview--struct-name"),
-            Static(" {", classes="structureview--field-decoration"),
-        )
+    def action_toggle_is_minimized(self):
+        self.is_minimized = not self.is_minimized
+
+    def on_click(self, ev):
+        self.action_toggle_is_minimized()
+
+    def render(self) -> Text:
+        t = Text()
+
+        decoration_style = self.get_component_rich_style("structureview--field-decoration")
+        name_style = self.get_component_rich_style("structureview--struct-name")
+
+        # like: struct IMAGE_DOS_HEADER {
+        t.append("struct ", style=decoration_style)
+        t.append(self.name or self.type.name, style=name_style)
+        t.append(" {", style=decoration_style)
+        t.append("\n")
 
         # use a table for formatting the structure fields,
         # so that alignment is easy.
@@ -717,7 +749,16 @@ class StructureView(Widget):
         table.add_column("@", style=style_decoration)
         table.add_column("offset", style=style_offset)
 
+        has_hidden = False
+        self.log(self.type.name, self.name)
+        key_fields = self.ctx.key_fields.get(self.type.name, set())
         for field in self.type.fields:
+
+            if self.is_minimized:
+                if field.name not in key_fields:
+                    has_hidden = True
+                    continue
+
             value = getattr(self.structure, field.name)
 
             key = f"{self.type.name}.{field.name}"
@@ -741,9 +782,27 @@ class StructureView(Widget):
                 hex(field.offset),
             )
 
-        yield Static(table, classes="fields")
+        if self.is_minimized and has_hidden:
+            table.add_row(
+                "...",
+                "",
+                "...",
+                "",
+                "",
+            )
 
-        yield Line(Static("}", classes="structureview--field-decoration"))
+        # this is a hack to emit the table into a Text object.
+        # the table is supposed to be rendered to a console, which requires a size,
+        # so we emulate it here.
+        console = rich.console.Console(width=self.size.width, force_terminal=True)
+        with console.capture() as capture:
+            console.print(table)
+        t.append(Text.from_ansi(capture.get()))
+
+        t.append("\n")
+        t.append("}", style=decoration_style)
+
+        return t
 
 
 def render_timestamp(v: int) -> str:
@@ -953,6 +1012,8 @@ class SectionView(Static):
         table.add_column("value", style=style_value)
 
         table.add_row("size:", hex(self.section.SizeOfRawData) + " / " + hex(self.section.Misc_VirtualSize))
+        # TODO: rstrip the section data before computing entropy
+        # otherwise the padding biases the results.
         table.add_row("entropy:", "%.02f" % self.section.get_entropy())
         table.add_row("md5:", self.section.get_hash_md5())
         table.add_row("sha256:", self.section.get_hash_sha256())
@@ -1090,7 +1151,14 @@ class PEApp(App):
             "IMAGE_OPTIONAL_HEADER64.DataDirectory": dont_render,
         }
 
-        self.ctx = Context(path, buf, pe, cparser, renderers)
+        key_fields = {
+            "IMAGE_FILE_HEADER": {"Machine", "TimeDateStamp"},
+            "IMAGE_OPTIONAL_HEADER32": {"ImageBase", "Subsystem"},
+            "IMAGE_OPTIONAL_HEADER64": {"ImageBase", "Subsystem"},
+            "IMAGE_DATA_DIRECTORY": {"VirtualAddress", "Size"},
+        }
+
+        self.ctx = Context(path, buf, pe, cparser, renderers, key_fields)
 
         self.title = f"pe: {self.ctx.path.name}"
 
@@ -1108,7 +1176,7 @@ class PEApp(App):
 
     def collect_file_structures(self):
         yield (self.ctx.pe.DOS_HEADER.get_file_offset(), "IMAGE_DOS_HEADER", None)
-        yield (self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_DOS_HEADER", None)
+        yield (self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_FILE_HEADER", None)
 
         if self.ctx.bitness == 32:
             yield (self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER32", None)
