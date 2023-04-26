@@ -261,8 +261,8 @@ class HexView(ScrollView):
     """
 
     def __init__(self, ctx: Context, address: int, length: int, row_length: int = 0x10, *args, **kwargs):
-        if length <= 0:
-            raise ValueError("length must be > 0")
+        if length < 0:
+            raise ValueError("length must be >= 0")
 
         if address < 0:
             raise ValueError("address must be >= 0")
