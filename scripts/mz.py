@@ -1103,41 +1103,48 @@ class ImportsView(Widget):
         self.ctx = ctx
         self.address = address
 
-    def compose(self) -> ComposeResult:
-        yield Line(
-            Static("import directory table", classes="peapp--title"),
-            Static(":", classes="peapp--decoration"),
-        )
+    def render(self) -> Text:
+        t = Text()
 
-        yield Line(
-            Static("  imphash", classes="peapp--key"),
-            Static(": ", classes="peapp--decoration"),
-            Static(self.ctx.pe.get_imphash()),
-        )
+        style_title = get_effective_global_color(self, "peapp--title")
+        style_decoration = get_effective_global_color(self, "peapp--decoration")
+        style_key = get_effective_global_color(self, "peapp--key")
 
-        yield Line()
+        t.append("import directory table", style=style_title)
+        t.append(":", style=style_decoration)
+        t.append("\n")
+
+        t.append("  ")
+        t.append("imphash", style=style_key)
+        t.append(": ", style=style_decoration)
+        t.append(self.ctx.pe.get_imphash())
+        t.append("\n")
 
         for dll in self.ctx.pe.DIRECTORY_ENTRY_IMPORT:
-            dll_name = dll.dll.decode("ascii")
+            try:
+                dll_name = dll.dll.decode("ascii")
+            except UnicodeDecodeError:
+                dll_name = "(invalid)"
 
-            yield Line(
-                Static("  "),
-                Static(dll_name, classes="peapp--key"),
-                Static(":", classes="peapp--decoration"),
-            )
+            t.append("  ")
+            t.append(dll_name, style=style_key)
+            t.append(": ", style=style_decoration)
+            t.append("\n")
 
             for entry in dll.imports:
                 if entry.name is None:
-                    # TODO: render ordinal
-                    continue
-
+                    symbol_name = f"#{entry.ordinal}"
                 else:
-                    symbol_name = entry.name.decode("ascii")
-                    yield Line(
-                        Static("    "),
-                        Static(symbol_name),
-                    )
+                    try:
+                        symbol_name = entry.name.decode("ascii")
+                    except UnicodeDecodeError:
+                        symbol_name = "(invalid)"
 
+                t.append("    ")
+                t.append(symbol_name)
+                t.append("\n")
+
+        return t
 
 class ExportsView(Widget):
     DEFAULT_CSS = """
@@ -1157,16 +1164,21 @@ class ExportsView(Widget):
         self.ctx = ctx
         self.address = address
 
-    def compose(self) -> ComposeResult:
-        yield Line(
-            Static("export directory table", classes="peapp--title"),
-            Static(":", classes="peapp--decoration"),
-        )
+    def render(self) -> Text:
+        t = Text()
+
+        style_title = get_effective_global_color(self, "peapp--title")
+        style_decoration = get_effective_global_color(self, "peapp--decoration")
+        style_key = get_effective_global_color(self, "peapp--key")
+
+        t.append("export directory table", style=style_title)
+        t.append(":", style=style_decoration)
+        t.append("\n")
 
         if not hasattr(self.ctx.pe, "DIRECTORY_ENTRY_EXPORT"):
-            yield Line(
-                Static("  (empty)"),
-            )
+            t.append("  ")
+            t.append("(empty)", style=style_decoration)
+            t.append("\n")
 
         else:
             try:
@@ -1174,35 +1186,38 @@ class ExportsView(Widget):
             except UnicodeDecodeError:
                 dll_name = "(invalid)"
 
-            yield Line(
-                Static("  name", classes="peapp--key"),
-                Static(":      ", classes="peapp--decoration"),
-                Static(dll_name),
-            )
+            t.append("  ")
+            t.append("name", style=style_key)
+            t.append(":      ", style=style_decoration)
+            t.append(dll_name)
+            t.append("\n")
 
             ts = self.ctx.pe.DIRECTORY_ENTRY_EXPORT.struct.TimeDateStamp
-            yield Line(
-                Static("  timestamp", classes="peapp--key"),
-                Static(": ", classes="peapp--decoration"),
-                Static(render_timestamp(ts)),
-            )
+            t.append("  ")
+            t.append("timestamp", style=style_key)
+            t.append(": ", style=style_decoration)
+            t.append(render_timestamp(ts))
+            t.append("\n")
 
-            yield Line(
-                Static("  symbols", classes="peapp--key"),
-                Static(": ", classes="peapp--decoration"),
-            )
+            t.append("  ")
+            t.append("symbols", style=style_key)
+            t.append(":", style=style_decoration)
+            t.append("\n")
 
             for entry in self.ctx.pe.DIRECTORY_ENTRY_EXPORT.symbols:
-                symbol_name = entry.name.decode("ascii")
-                yield Line(
-                    Static("    "),
-                    Static(symbol_name),
-                )
+                try:
+                    symbol_name = entry.name.decode("ascii")
+                except UnicodeDecodeError:
+                    symbol_name = "(invalid)"
+
+                t.append("    ")
+                t.append(symbol_name)
+                t.append("\n")
+
+        return t
 
 
 class NavView(Static):
-    """"""
-
     DEFAULT_CSS = """
         NavView {
             height: 100%;
