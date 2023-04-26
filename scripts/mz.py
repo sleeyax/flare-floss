@@ -144,10 +144,6 @@ class Line(Horizontal):
 
 class MetadataView(Static):
     DEFAULT_CSS = """
-        MetadataView {
-            height: auto;
-        }
-
         MetadataView .metadataview--title {
             color: $secondary;
         }
@@ -521,9 +517,30 @@ class BinaryView(Widget):
         }
 
         BinaryView TabPane {
+            /* align the tab content with the first tab title */
             padding: 0;
-            padding-left: 2;
+            padding-left: 1;
         }
+
+        /* condense the tab layout: remove the empty line above the tab row */
+        /* */
+        BinaryView Tabs {
+            /* tab row is height two: 1 for the tab title, 1 for the underline */
+            height: 2;
+        }
+
+        BinaryView Tabs Horizontal Tab {
+            /* the tab title is height one, no extra padding */
+            height: 1;
+            padding: 0 1 0 1;
+        }
+
+        BinaryView Tabs #tabs-list {
+            /* the tabs list should only have one line */
+            min-height: 1;
+        }
+        /* */
+        /* end tab layout fix */
     """
 
     def __init__(self, ctx: Context, address: int, length: int, *args, **kwargs):
@@ -537,8 +554,9 @@ class BinaryView(Widget):
         sv = StringsView(self.ctx, self.address, self.length)
         hv = HexView(self.ctx, self.address, self.length)
 
+        # when there are strings, prefer to show those.
+        # otherwise, show the hex data.
         if sv.strings:
-            yield Label("data:")
             with TabbedContent():
                 with TabPane(f"strings ({len(sv.strings)})"):
                     yield sv
@@ -959,7 +977,7 @@ def dont_render(v: Any) -> str:
     raise DontRender()
 
 
-class SectionView(Static):
+class SectionView(Widget):
     COMPONENT_CLASSES = {
         "sectionview--key",
         "sectionview--value",
@@ -1104,7 +1122,7 @@ class SectionView(Static):
         )
 
 
-class SegmentView(Static):
+class SegmentView(Widget):
     """a view used for regions of the file not covered by a section"""
 
     COMPONENT_CLASSES = {
@@ -1177,7 +1195,7 @@ class SegmentView(Static):
         yield BinaryView(self.ctx, self.address, self.length, classes="peapp--pane")
 
 
-class ImportsView(Static):
+class ImportsView(Widget):
     DEFAULT_CSS = """
         ImportsView {
             height: auto;
@@ -1219,7 +1237,7 @@ class ImportsView(Static):
         yield Line(Static("import directory table:", classes="importsview--title"))
 
         yield Line(
-            Static("  imphash:      ", classes="importsview--heading"),
+            Static("  imphash: ", classes="importsview--heading"),
             Static(self.ctx.pe.get_imphash()),
         )
 
@@ -1247,7 +1265,7 @@ class ImportsView(Static):
                     )
 
 
-class ExportsView(Static):
+class ExportsView(Widget):
     DEFAULT_CSS = """
         ExportsView {
             height: auto;
