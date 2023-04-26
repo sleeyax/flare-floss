@@ -1,5 +1,5 @@
 """
-    "textual==0.20.1",
+    "textual==0.21.0",
     "rich==13.3.3",
     "dissect.cstruct==3.6",
 
