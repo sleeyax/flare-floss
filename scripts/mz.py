@@ -28,6 +28,7 @@ import rich.console
 from dissect import cstruct
 from textual import events
 from rich.text import Text
+from rich.style import Style
 from textual.app import App, ComposeResult
 from rich.segment import Segment
 from textual.strip import Strip
@@ -37,10 +38,9 @@ from textual.widgets import Label, Static, TabPane, TabbedContent
 from textual.geometry import Size
 from textual.reactive import reactive
 from textual.containers import Horizontal, VerticalScroll
+from textual.css.styles import Styles
 from textual.scroll_view import ScrollView
 from dissect.cstruct.types.enum import EnumInstance
-from textual.css.styles import Styles
-from rich.style import Style
 
 logger = logging.getLogger("mz")
 
@@ -150,7 +150,7 @@ def get_global_style(node, classname: str) -> Styles:
 def get_effective_global_color(node, classname: str) -> Style:
     """
     fetch the color style for the given global class name and merge it with the current style.
-    this is alpha aware, unlike get_global_style, so it'll handle muted text nicely 
+    this is alpha aware, unlike get_global_style, so it'll handle muted text nicely
     (which relies upon alpha to progressively dim text).
 
     note: rich styles don't understand alpha. colors with alpha are a textual construct.
@@ -1048,6 +1048,7 @@ class SectionView(Widget):
 
 class SegmentView(Widget):
     """a view used for regions of the file not covered by a section"""
+
     DEFAULT_CSS = """
         SegmentView {
             height: auto;
