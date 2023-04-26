@@ -26,15 +26,16 @@ import pefile
 import rich.table
 import rich.console
 from dissect import cstruct
-from textual import events
 from rich.text import Text
 from rich.style import Style
 from textual.app import App, ComposeResult
 from rich.segment import Segment
 from textual.strip import Strip
+from textual.screen import Screen
 from textual.widget import Widget
+from textual.binding import Binding
 from textual.logging import TextualHandler
-from textual.widgets import Label, Static, TabPane, TabbedContent
+from textual.widgets import Label, Footer, Static, TabPane, TabbedContent
 from textual.geometry import Size
 from textual.reactive import reactive
 from textual.containers import Horizontal, VerticalScroll
@@ -753,13 +754,7 @@ STRUCTURES = """
 """
 
 
-class StructureView(Widget):
-    DEFAULT_CSS = """
-        StructureView {
-            height: auto;
-        }
-    """
-
+class StructureView(Static):
     is_minimized = reactive(True, layout=True)
 
     def __init__(self, ctx: Context, address: int, typename: str, *args, **kwargs):
@@ -1041,9 +1036,14 @@ class SectionView(Widget):
         for child in self.section_children:
             yield child
 
-        yield BinaryView(
-            self.ctx, self.section.get_PointerToRawData_adj(), self.section.SizeOfRawData, classes="peapp--pane"
-        )
+        offset = self.section.get_PointerToRawData_adj()
+        length = self.section.SizeOfRawData
+
+        if offset + length > len(self.ctx.buf):
+            # the last section may be truncated and rely upon page/section alignment in memory
+            length = len(self.ctx.buf) - offset
+
+        yield BinaryView(self.ctx, offset, length, classes="peapp--pane")
 
 
 class SegmentView(Widget):
@@ -1085,13 +1085,7 @@ class SegmentView(Widget):
         yield BinaryView(self.ctx, self.address, self.length, classes="peapp--pane")
 
 
-class ImportsView(Widget):
-    DEFAULT_CSS = """
-        ImportsView {
-            height: auto;
-        }
-    """
-
+class ImportsView(Static):
     def __init__(
         self,
         ctx: Context,
@@ -1147,13 +1141,7 @@ class ImportsView(Widget):
         return t
 
 
-class ExportsView(Widget):
-    DEFAULT_CSS = """
-        ExportsView {
-            height: auto;
-        }
-    """
-
+class ExportsView(Static):
     def __init__(
         self,
         ctx: Context,
@@ -1222,7 +1210,7 @@ class NavView(Static):
     DEFAULT_CSS = """
         NavView {
             height: 100%;
-            width: 28;
+            width: 24;
             dock: left;
 
             border-right: tall $background;
@@ -1281,6 +1269,8 @@ class NavView(Static):
             elif isinstance(sibling, SectionView):
                 sibling_name = f"{sibling.section_name} section"
                 children = sibling.section_children
+            elif isinstance(sibling, Footer):
+                continue
             else:
                 raise ValueError("unknown sibling type: " + str(type(sibling)))
 
@@ -1299,6 +1289,225 @@ class NavView(Static):
                 lines.append(f"  [@click=navigate_to('{child.id}')]{child_name}[/]")
 
         return "\n".join(lines)
+
+
+@dataclass
+class StructureAt:
+    address: int
+    type: str
+
+
+@dataclass
+class Region:
+    address: int
+    length: int
+    type: Literal["segment"] | Literal["section"]
+    section: Optional[pefile.SectionStructure] = None
+    children: List[StructureAt] = dataclasses.field(default_factory=list)
+
+    @property
+    def end(self) -> int:
+        return self.address + self.length
+
+
+class MainScreen(Screen):
+    DEFAULT_CSS = """
+        MainScreen {
+            height: 100%;
+            width: 100%;
+        }
+    """
+
+    BINDINGS = [
+        Binding("m", "nav_metadata", "Metadata"),
+        Binding("i", "nav_imports", "Imports"),
+        Binding("e", "nav_exports", "Exports"),
+        Binding("q", "quit", "Quit"),
+        # vim-like bindings: line, page, home/end
+        Binding("j", "scroll_down", "Down", show=False),
+        Binding("k", "scroll_up", "Up", show=False),
+        Binding("ctrl+f,space", "scroll_page_down", "Page Down", show=False),
+        Binding("ctrl+b", "scroll_page_up", "Page Up", show=False),
+        Binding("g", "scroll_home", "home", show=False),
+        Binding("G", "scroll_end", "end", show=False),
+    ]
+
+    def __init__(self, ctx, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ctx = ctx
+
+    def action_nav_metadata(self):
+        target = self.query_one("MetadataView")
+
+        # scroll to top, so the widget is placed in a consistent place.
+        # otherwise, sometimes its at the top, or middle, or bottom.
+        # animation is distracting (and sometimes janky)
+        target.scroll_visible(top=True, animate=False)
+
+    def action_nav_imports(self):
+        target = self.query_one("ImportsView")
+        target.scroll_visible(top=True, animate=False)
+
+    def action_nav_exports(self):
+        target = self.query_one("ExportsView")
+        target.scroll_visible(top=True, animate=False)
+
+    def action_scroll_down(self):
+        self.scroll_relative(
+            y=2,
+            animate=False,
+        )
+
+    def action_scroll_up(self):
+        self.scroll_relative(
+            y=-2,
+            animate=False,
+        )
+
+    def action_scroll_page_up(self):
+        self.scroll_page_up(
+            animate=False,
+        )
+
+    def action_scroll_page_down(self):
+        self.scroll_page_down(
+            animate=False,
+        )
+
+    def action_scroll_home(self):
+        self.scroll_home(
+            animate=False,
+        )
+
+    def action_scroll_end(self):
+        self.scroll_end(
+            animate=False,
+        )
+
+    def action_quit(self):
+        self.app.exit()
+
+    def collect_file_structures(self) -> Iterable[StructureAt]:
+        yield StructureAt(self.ctx.pe.DOS_HEADER.get_file_offset(), "IMAGE_DOS_HEADER")
+        yield StructureAt(self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_FILE_HEADER")
+
+        if self.ctx.bitness == 32:
+            yield StructureAt(self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER32")
+        elif self.ctx.bitness == 64:
+            yield StructureAt(self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER64")
+        else:
+            raise ValueError(f"unknown bitness: {self.ctx.bitness}")
+
+        for i, directory in enumerate(self.ctx.pe.OPTIONAL_HEADER.DATA_DIRECTORY):
+            if directory.VirtualAddress == 0 or directory.Size == 0:
+                continue
+
+            enum = self.ctx.cparser.typedefs["IMAGE_DIRECTORY_ENTRY"]
+            name = enum.reverse[i]
+
+            directory_offset = self.ctx.pe.get_offset_from_rva(directory.VirtualAddress)
+
+            if name == "IMAGE_DIRECTORY_ENTRY_IMPORT":
+                yield StructureAt(directory_offset, "DIRECTORY_ENTRY_IMPORT")
+
+            elif name == "IMAGE_DIRECTORY_ENTRY_EXPORT":
+                yield StructureAt(directory_offset, "DIRECTORY_ENTRY_EXPORT")
+
+            # DIRECTORY_ENTRY_RESOURCE (ResourceDirData instance)
+            # DIRECTORY_ENTRY_DEBUG (list of DebugData instances)
+            # DIRECTORY_ENTRY_BASERELOC (list of BaseRelocationData instances)
+            # DIRECTORY_ENTRY_TLS
+            # DIRECTORY_ENTRY_BOUND_IMPORT (list of BoundImportData instances)
+
+    def compute_file_regions(self) -> Tuple[Region, ...]:
+        regions = []
+
+        for section in sorted(self.ctx.pe.sections, key=lambda s: s.PointerToRawData):
+            regions.append(Region(section.get_PointerToRawData_adj(), section.SizeOfRawData, "section", section))
+
+        # segment that contains all data until the first section
+        regions.insert(0, Region(0, regions[0].address, "segment"))
+
+        # segment that contains all data after the last section
+        # aka. "overlay"
+        last_section = regions[-1]
+        if last_section.end < len(self.ctx.buf):
+            regions.append(Region(last_section.end, len(self.ctx.buf) - last_section.end, "segment"))
+
+        # add segments for any gaps between sections.
+        # note that we append new items to the end of the list and then resort,
+        # to avoid mutating the list while we're iterating over it.
+        for i in range(1, len(regions)):
+            prior = regions[i - 1]
+            region = regions[i]
+
+            if prior.end != region.address:
+                regions.append(Region(prior.end, region.address - prior.end, "segment"))
+        regions.sort(key=lambda s: s.address)
+
+        for structure in self.collect_file_structures():
+            for region in regions:
+                if structure.address >= region.address and structure.address < region.end:
+                    region.children.append(structure)
+                    break
+
+        return tuple(regions)
+
+    def compose(self) -> ComposeResult:
+        id_generator = map(lambda i: f"id-{i}", range(1000))
+
+        yield NavView(self.ctx, id=next(id_generator))
+        yield MetadataView(self.ctx, classes="peapp--pane", id=next(id_generator))
+
+        # sections
+        # TODO: rich header (hex, parsed)
+        # TODO: resources
+
+        regions = self.compute_file_regions()
+        for i, region in enumerate(regions):
+            children: List[Widget] = []
+
+            for child in region.children:
+                if child.type == "DIRECTORY_ENTRY_IMPORT":
+                    children.append(ImportsView(self.ctx, child.address, classes="peapp--pane", id=next(id_generator)))
+                elif child.type == "DIRECTORY_ENTRY_EXPORT":
+                    children.append(ExportsView(self.ctx, child.address, classes="peapp--pane", id=next(id_generator)))
+                else:
+                    children.append(
+                        StructureView(self.ctx, child.address, child.type, classes="peapp--pane", id=next(id_generator))
+                    )
+
+            if region.type == "segment":
+                if i == 0:
+                    name = "header"
+                elif i == len(regions) - 1:
+                    name = "overlay"
+                else:
+                    name = "gap"
+
+                if self.ctx.buf[region.address : region.end].count(0) == region.length:
+                    # if segment is all NULLs, don't show it (header/gap/overlay)
+                    continue
+
+                yield SegmentView(
+                    self.ctx,
+                    name,
+                    region.address,
+                    region.length,
+                    segment_children=children,
+                    classes="peapp--pane",
+                    id=next(id_generator),
+                )
+
+            elif region.type == "section":
+                yield SectionView(
+                    self.ctx, region.section, section_children=children, classes="peapp--pane", id=next(id_generator)
+                )
+
+            else:
+                raise ValueError(f"unknown region type: {region.type}")
+
+        yield Footer()
 
 
 class PEApp(App):
@@ -1385,149 +1594,8 @@ class PEApp(App):
 
         self.title = f"pe: {self.ctx.path.name}"
 
-    @dataclass
-    class StructureAt:
-        address: int
-        type: str
-
-    @dataclass
-    class Region:
-        address: int
-        length: int
-        type: Literal["segment"] | Literal["section"]
-        section: Optional[pefile.SectionStructure] = None
-        children: List["PEApp.StructureAt"] = dataclasses.field(default_factory=list)
-
-        @property
-        def end(self) -> int:
-            return self.address + self.length
-
-    def collect_file_structures(self) -> Iterable["PEApp.StructureAt"]:
-        yield self.StructureAt(self.ctx.pe.DOS_HEADER.get_file_offset(), "IMAGE_DOS_HEADER")
-        yield self.StructureAt(self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_FILE_HEADER")
-
-        if self.ctx.bitness == 32:
-            yield self.StructureAt(self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER32")
-        elif self.ctx.bitness == 64:
-            yield self.StructureAt(self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER64")
-        else:
-            raise ValueError(f"unknown bitness: {self.ctx.bitness}")
-
-        for i, directory in enumerate(self.ctx.pe.OPTIONAL_HEADER.DATA_DIRECTORY):
-            if directory.VirtualAddress == 0 or directory.Size == 0:
-                continue
-
-            enum = self.ctx.cparser.typedefs["IMAGE_DIRECTORY_ENTRY"]
-            name = enum.reverse[i]
-
-            directory_offset = self.ctx.pe.get_offset_from_rva(directory.VirtualAddress)
-
-            if name == "IMAGE_DIRECTORY_ENTRY_IMPORT":
-                yield self.StructureAt(directory_offset, "DIRECTORY_ENTRY_IMPORT")
-
-            elif name == "IMAGE_DIRECTORY_ENTRY_EXPORT":
-                yield self.StructureAt(directory_offset, "DIRECTORY_ENTRY_EXPORT")
-
-            # DIRECTORY_ENTRY_RESOURCE (ResourceDirData instance)
-            # DIRECTORY_ENTRY_DEBUG (list of DebugData instances)
-            # DIRECTORY_ENTRY_BASERELOC (list of BaseRelocationData instances)
-            # DIRECTORY_ENTRY_TLS
-            # DIRECTORY_ENTRY_BOUND_IMPORT (list of BoundImportData instances)
-
-    def compute_file_regions(self) -> Tuple[Region, ...]:
-        regions = []
-
-        for section in sorted(self.ctx.pe.sections, key=lambda s: s.PointerToRawData):
-            regions.append(self.Region(section.get_PointerToRawData_adj(), section.SizeOfRawData, "section", section))
-
-        # segment that contains all data until the first section
-        regions.insert(0, self.Region(0, regions[0].address, "segment"))
-
-        # segment that contains all data after the last section
-        # aka. "overlay"
-        last_section = regions[-1]
-        if last_section.end < len(self.ctx.buf):
-            regions.append(self.Region(last_section.end, len(self.ctx.buf) - last_section.end, "segment"))
-
-        # add segments for any gaps between sections.
-        # note that we append new items to the end of the list and then resort,
-        # to avoid mutating the list while we're iterating over it.
-        for i in range(1, len(regions)):
-            prior = regions[i - 1]
-            region = regions[i]
-
-            if prior.end != region.address:
-                regions.append(self.Region(prior.end, region.address - prior.end, "segment"))
-        regions.sort(key=lambda s: s.address)
-
-        for structure in self.collect_file_structures():
-            for region in regions:
-                if structure.address >= region.address and structure.address < region.end:
-                    region.children.append(structure)
-                    break
-
-        return tuple(regions)
-
-    def compose(self) -> ComposeResult:
-        id_generator = map(lambda i: f"id-{i}", range(1000))
-
-        yield NavView(self.ctx, id=next(id_generator))
-        yield MetadataView(self.ctx, classes="peapp--pane", id=next(id_generator))
-
-        # sections
-        # TODO: rich header (hex, parsed)
-        # TODO: resources
-
-        regions = self.compute_file_regions()
-        for i, region in enumerate(regions):
-            children: List[Widget] = []
-
-            for child in region.children:
-                if child.type == "DIRECTORY_ENTRY_IMPORT":
-                    children.append(ImportsView(self.ctx, child.address, classes="peapp--pane", id=next(id_generator)))
-                elif child.type == "DIRECTORY_ENTRY_EXPORT":
-                    children.append(ExportsView(self.ctx, child.address, classes="peapp--pane", id=next(id_generator)))
-                else:
-                    children.append(
-                        StructureView(self.ctx, child.address, child.type, classes="peapp--pane", id=next(id_generator))
-                    )
-
-            if region.type == "segment":
-                if i == 0:
-                    name = "header"
-                elif i == len(regions) - 1:
-                    name = "overlay"
-                else:
-                    name = "gap"
-
-                if self.ctx.buf[region.address : region.end].count(0) == region.length:
-                    # if segment is all NULLs, don't show it (header/gap/overlay)
-                    continue
-
-                yield SegmentView(
-                    self.ctx,
-                    name,
-                    region.address,
-                    region.length,
-                    segment_children=children,
-                    classes="peapp--pane",
-                    id=next(id_generator),
-                )
-
-            elif region.type == "section":
-                yield SectionView(
-                    self.ctx, region.section, section_children=children, classes="peapp--pane", id=next(id_generator)
-                )
-
-            else:
-                raise ValueError(f"unknown region type: {region.type}")
-
-    def on_mount(self) -> None:
-        self.log("mounted")
-
-    async def on_key(self, event: events.Key) -> None:
-        if event.key == "q":
-            self.exit()
+    def on_mount(self):
+        self.push_screen(MainScreen(self.ctx))
 
 
 async def main(argv=None):
