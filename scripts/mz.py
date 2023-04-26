@@ -43,10 +43,59 @@ from dissect.cstruct.types.enum import EnumInstance
 logger = logging.getLogger("mz")
 
 
+ASCII_BYTE = r" !\"#\$%&\'\(\)\*\+,-\./0123456789:;<=>\?@ABCDEFGHIJKLMNOPQRSTUVWXYZ\[\]\^_`abcdefghijklmnopqrstuvwxyz\{\|\}\\\~\t".encode(
+    "ascii"
+)
+ASCII_RE_4 = re.compile(b"([%s]{%d,})" % (ASCII_BYTE, 4))
+UNICODE_RE_4 = re.compile(b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, 4))
+
+
+@dataclass
+class String:
+    s: str
+    offset: int
+    flavor: Literal["ascii", "unicode"]
+
+
+def extract_ascii_strings(buf: bytes, n: int = 4) -> Iterable[String]:
+    """Extract ASCII strings from the given binary data."""
+
+    if not buf:
+        return
+
+    r = None
+    if n == 4:
+        r = ASCII_RE_4
+    else:
+        reg = b"([%s]{%d,})" % (ASCII_BYTE, n)
+        r = re.compile(reg)
+    for match in r.finditer(buf):
+        yield String(match.group().decode("ascii"), match.start(), "ascii")
+
+
+def extract_unicode_strings(buf: bytes, n: int = 4) -> Iterable[String]:
+    """Extract naive UTF-16 strings from the given binary data."""
+    if not buf:
+        return
+
+    if n == 4:
+        r = UNICODE_RE_4
+    else:
+        reg = b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, n)
+        r = re.compile(reg)
+    for match in r.finditer(buf):
+        try:
+            yield String(match.group().decode("utf-16"), match.start(), "unicode")
+        except UnicodeDecodeError:
+            pass
+
+
 @dataclass
 class Context:
     path: pathlib.Path
     buf: bytearray
+    # sorted by offset
+    strings: List[String]
     pe: pefile.PE
     cparser: cstruct.cstruct
 
@@ -428,19 +477,16 @@ class StringsView(VerticalScroll):
         self.ctx = ctx
         self.address = address
         self.length = length
+        self.strings = list(filter(lambda s: s.offset >= address and s.offset < address + length, self.ctx.strings))
 
     def compose(self) -> ComposeResult:
-        buf = self.ctx.buf[self.address : self.address + self.length]
-
         address_style = self.get_component_rich_style("stringsview--address")
         flavor_style = self.get_component_rich_style("stringsview--flavor")
         decoration_style = self.get_component_rich_style("stringsview--decoration")
 
         has_strings = False
         t = Text()
-        for s in sorted(
-            itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset
-        ):
+        for s in self.strings:
             t.append(f"{self.address + s.offset:08x}: ", style=address_style)
             t.append("ascii: " if s.flavor == "ascii" else "utf16: ", style=flavor_style)
             t.append(s.s)
@@ -452,20 +498,6 @@ class StringsView(VerticalScroll):
 
         yield Static(t)
         return
-
-        for s in sorted(
-            itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset
-        ):
-            string_classes = [
-                "stringsview--" + s.flavor,
-                "stringsview--string",
-            ]
-
-            yield Line(
-                Static(f"{self.address + s.offset:08x}:", classes="stringsview--address"),
-                Static(" ascii: " if s.flavor == "ascii" else " utf16: ", classes="stringsview--flavor"),
-                Static(s.s, classes=" ".join(string_classes), markup=False),
-            )
 
 
 class BinaryView(Widget):
@@ -502,12 +534,22 @@ class BinaryView(Widget):
         self.length = length
 
     def compose(self) -> ComposeResult:
-        yield Label("data:")
-        with TabbedContent():
-            with TabPane("strings"):
-                yield StringsView(self.ctx, self.address, self.length)
-            with TabPane("hex"):
-                yield HexView(self.ctx, self.address, self.length)
+        sv = StringsView(self.ctx, self.address, self.length)
+        hv = HexView(self.ctx, self.address, self.length)
+
+        if sv.strings:
+            yield Label("data:")
+            with TabbedContent():
+                with TabPane(f"strings ({len(sv.strings)})"):
+                    yield sv
+                with TabPane("hex"):
+                    yield hv
+        else:
+            with TabbedContent():
+                with TabPane("hex"):
+                    yield hv
+                with TabPane("strings (0)"):
+                    yield Label("(none)")
 
 
 STRUCTURES = """
@@ -915,71 +957,6 @@ class DontRender(Exception):
 
 def dont_render(v: Any) -> str:
     raise DontRender()
-
-
-ASCII_BYTE = r" !\"#\$%&\'\(\)\*\+,-\./0123456789:;<=>\?@ABCDEFGHIJKLMNOPQRSTUVWXYZ\[\]\^_`abcdefghijklmnopqrstuvwxyz\{\|\}\\\~\t".encode(
-    "ascii"
-)
-ASCII_RE_4 = re.compile(b"([%s]{%d,})" % (ASCII_BYTE, 4))
-UNICODE_RE_4 = re.compile(b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, 4))
-REPEATS = [b"A", b"\x00", b"\xfe", b"\xff"]
-SLICE_SIZE = 4096
-
-
-@dataclass
-class String:
-    s: str
-    offset: int
-    flavor: Literal["ascii", "unicode"]
-
-
-def buf_filled_with(buf, character):
-    dupe_chunk = character * SLICE_SIZE
-    for offset in range(0, len(buf), SLICE_SIZE):
-        new_chunk = buf[offset : offset + SLICE_SIZE]
-        if dupe_chunk[: len(new_chunk)] != new_chunk:
-            return False
-    return True
-
-
-def extract_ascii_strings(buf: bytes, n: int = 4) -> Iterable[String]:
-    """Extract ASCII strings from the given binary data."""
-
-    if not buf:
-        return
-
-    if (buf[0] in REPEATS) and buf_filled_with(buf, buf[0]):
-        return
-
-    r = None
-    if n == 4:
-        r = ASCII_RE_4
-    else:
-        reg = b"([%s]{%d,})" % (ASCII_BYTE, n)
-        r = re.compile(reg)
-    for match in r.finditer(buf):
-        yield String(match.group().decode("ascii"), match.start(), "ascii")
-
-
-def extract_unicode_strings(buf: bytes, n: int = 4) -> Iterable[String]:
-    """Extract naive UTF-16 strings from the given binary data."""
-
-    if not buf:
-        return
-
-    if (buf[0] in REPEATS) and buf_filled_with(buf, buf[0]):
-        return
-
-    if n == 4:
-        r = UNICODE_RE_4
-    else:
-        reg = b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, n)
-        r = re.compile(reg)
-    for match in r.finditer(buf):
-        try:
-            yield String(match.group().decode("utf-16"), match.start(), "unicode")
-        except UnicodeDecodeError:
-            pass
 
 
 class SectionView(Static):
@@ -1478,7 +1455,11 @@ class PEApp(App):
             "IMAGE_DATA_DIRECTORY": {"VirtualAddress", "Size"},
         }
 
-        self.ctx = Context(path, buf, pe, cparser, renderers, key_fields)
+        strings = list(
+            sorted(itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset)
+        )
+
+        self.ctx = Context(path, buf, strings, pe, cparser, renderers, key_fields)
 
         self.title = f"pe: {self.ctx.path.name}"
 
