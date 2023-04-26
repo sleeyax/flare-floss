@@ -453,8 +453,6 @@ class StringsView(VerticalScroll):
         yield Static(t)
         return
 
-
-
         for s in sorted(
             itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset
         ):
@@ -768,7 +766,6 @@ class StructureView(Widget):
 
         decoration_style = self.get_component_rich_style("structureview--field-decoration")
         name_style = self.get_component_rich_style("structureview--struct-name")
-        address_style = self.get_component_rich_style("structureview--address")
 
         # like: struct IMAGE_DOS_HEADER {
         t.append("struct ", style=decoration_style)
@@ -1383,12 +1380,21 @@ class NavView(Static):
         self.ctx = ctx
 
     def action_navigate_to(self, id: str):
-        self.parent.query_one(f"#{id}").scroll_visible(top=True, animate=False)
+        # only an App will not have a parent
+        parent = self.parent
+        assert parent is not None
+
+        target = parent.query_one(f"#{id}")
+        # scroll to top, so the widget is placed in a consistent place.
+        # otherwise, sometimes its at the top, or middle, or bottom.
+        # animation is distracting (and sometimes janky)
+        target.scroll_visible(top=True, animate=False)
 
     def render(self) -> str:
         lines = []
 
         for sibling in self.siblings:
+            children: Sequence[Widget]
             if isinstance(sibling, MetadataView):
                 sibling_name = "metadata"
                 children = []
@@ -1567,7 +1573,7 @@ class PEApp(App):
 
         regions = self.compute_file_regions()
         for i, region in enumerate(regions):
-            children = []
+            children: List[Widget] = []
 
             for child in region.children:
                 offset, type, name = child
