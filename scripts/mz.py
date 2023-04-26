@@ -39,6 +39,8 @@ from textual.reactive import reactive
 from textual.containers import Horizontal, VerticalScroll
 from textual.scroll_view import ScrollView
 from dissect.cstruct.types.enum import EnumInstance
+from textual.css.styles import Styles
+from rich.style import Style
 
 logger = logging.getLogger("mz")
 
@@ -121,6 +123,52 @@ class Context:
             raise ValueError("unknown bitness")
 
 
+def get_global_style(node, classname: str) -> Styles:
+    """
+    find the style with the given class name defined at the App level.
+
+    this is needed for widgets that use rich formatting, rather than CSS formatting/classes,
+     and need to access the style provided by the application.
+    its only useful to fetch simple styles defined at the application global level.
+    much more logic would be needed to extract styles with scopes like `app > widget > child`.
+
+    use the `.partial_rich_style` property on the result to translate to something usable by rich.
+    for example:
+
+        return Text("foo", style=get_global_style(self, "decoration").partial_rich_style)
+
+    see also `get_effective_global_color` when you need alpha-aware colors.
+    """
+    key = f".{classname}"
+    rules = node.app.stylesheet.rules_map.get(key, [])
+    assert len(rules) == 1
+    # not sure what happens if there's more than one candidate,
+    # lets try to avoid that, by convention.
+    return rules[0].styles
+
+
+def get_effective_global_color(node, classname: str) -> Style:
+    """
+    fetch the color style for the given global class name and merge it with the current style.
+    this is alpha aware, unlike get_global_style, so it'll handle muted text nicely 
+    (which relies upon alpha to progressively dim text).
+
+    note: rich styles don't understand alpha. colors with alpha are a textual construct.
+    hence, this routine.
+    """
+    global_style = get_global_style(node, classname)
+    color = global_style.get_rule("color")
+
+    # (base_background, base_color, background, color)
+    _, _, background, _ = node.colors
+
+    # see DOMNode.rich_style for inspiration
+    return Style.from_color(
+        (background + color).rich_color if (background.a or color.a) else None,
+        background.rich_color if background.a else None,
+    )
+
+
 def w(s: str) -> Text:
     """wrapper for multi-line text"""
     return Text.from_markup(textwrap.dedent(s.lstrip("\n")).strip())
@@ -143,39 +191,24 @@ class Line(Horizontal):
 
 
 class MetadataView(Static):
-    DEFAULT_CSS = """
-        MetadataView .metadataview--title {
-            color: $secondary;
-        }
-
-        MetadataView .metadataview--key {
-            color: $accent;
-        }
-
-        MetadataView .metadataview--value {
-            color: $text;
-        }
-    """
-
     def __init__(self, ctx: Context, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
         self.ctx = ctx
 
     def compose(self) -> ComposeResult:
-        yield Label("metadata:", classes="metadataview--title")
+        yield Label("metadata:", classes="peapp--title")
         yield Line(
-            Static("  name: ", classes="metadataview--key"),
-            Static(self.ctx.path.name, classes="metadataview--value"),
+            Static("  name: ", classes="peapp--key"),
+            Static(self.ctx.path.name),
         )
         yield Line(
-            Static("  size: ", classes="metadataview--key"),
-            Static(hex(len(self.ctx.buf)), classes="metadataview--value"),
+            Static("  size: ", classes="peapp--key"),
+            Static(hex(len(self.ctx.buf))),
         )
 
         warnings = self.ctx.pe.get_warnings()
         if warnings:
-            yield Label("  warnings:", classes="metadataview--key")
+            yield Label("  warnings:", classes="peapp--key")
             for warning in warnings:
                 yield Label(f"    - {warning}")
 
@@ -442,28 +475,10 @@ class HexTestView(Widget):
 
 
 class StringsView(VerticalScroll):
-    COMPONENT_CLASSES = {
-        "stringsview--address",
-        "stringsview--flavor",
-        "stringsview--decoration",
-    }
-
     DEFAULT_CSS = """
         StringsView {
             /* let the container set our size */
             height: auto;
-        }
-
-        StringsView .stringsview--address {
-            color: $accent;
-        }
-
-        StringsView .stringsview--flavor {
-            color: $text-muted;
-        }
-
-        StringsView .stringsview--decoration {
-            color: $text-muted;
         }
     """
 
@@ -476,15 +491,17 @@ class StringsView(VerticalScroll):
         self.strings = list(filter(lambda s: s.offset >= address and s.offset < address + length, self.ctx.strings))
 
     def compose(self) -> ComposeResult:
-        address_style = self.get_component_rich_style("stringsview--address")
-        flavor_style = self.get_component_rich_style("stringsview--flavor")
-        decoration_style = self.get_component_rich_style("stringsview--decoration")
+        address_style = get_effective_global_color(self, "peapp--address")
+        flavor_style = get_effective_global_color(self, "peapp--decoration")
+        decoration_style = get_effective_global_color(self, "peapp--decoration")
 
         has_strings = False
         t = Text()
         for s in self.strings:
-            t.append(f"{self.address + s.offset:08x}: ", style=address_style)
-            t.append("ascii: " if s.flavor == "ascii" else "utf16: ", style=flavor_style)
+            t.append(f"{self.address + s.offset:08x}", style=address_style)
+            t.append(": ", style=decoration_style)
+            t.append("ascii" if s.flavor == "ascii" else "utf16", style=flavor_style)
+            t.append(": ", style=decoration_style)
             t.append(s.s)
             t.append("\n")
             has_strings = True
@@ -503,14 +520,6 @@ class BinaryView(Widget):
             height: auto;
         }
 
-        BinaryView > Label {
-            color: $text-muted;
-        }
-
-        /* i haven't figured out the right pattern to use here */
-        /* we have to explicitly set these widgets size,       */
-        /* i think because the HexView is line-based.          */
-        /* the container is welcomed to override these sizes.  */
         BinaryView StringsView,
         BinaryView HexView {
             max-height: 32;
@@ -745,70 +754,19 @@ STRUCTURES = """
 
 
 class StructureView(Widget):
-    COMPONENT_CLASSES = {
-        "structureview--address",
-        "structureview--struct-name",
-        "structureview--field-name",
-        "structureview--field-type",
-        "structureview--field-offset",
-        "structureview--field-value",
-        "structureview--field-decoration",
-    }
-
     DEFAULT_CSS = """
         StructureView {
             height: auto;
-        }
-
-        StructureView > Static.fields {
-          margin-left: 1;
-        }
-
-        StructureView .structureview--address {
-          color: $accent;
-        }
-
-        StructureView .structureview--struct-name {
-          color: $secondary;
-        }
-
-        StructureView .structureview--field-name {
-          color: $accent;
-        }
-
-        StructureView .structureview--field-type {
-          color: $text-muted;
-        }
-
-        StructureView .structureview--field-offset {
-          color: $text-muted;
-        }
-
-        StructureView .structureview--field-value {
-          color: $text;
-        }
-
-        StructureView.structureview--is-minimized .structureview--field-value {
-          color: red;
-        }
-
-        StructureView.structureview--is-minimized .structureview--field-value {
-          color: blue;
-        }
-
-        StructureView .structureview--field-decoration {
-          color: $text-muted;
         }
     """
 
     is_minimized = reactive(True, layout=True)
 
-    def __init__(self, ctx: Context, address: int, typename: str, name: Optional[str] = None, *args, **kwargs):
-        super().__init__(name=name, *args, **kwargs)
+    def __init__(self, ctx: Context, address: int, typename: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
         self.ctx = ctx
         self.address = address
-        # self.name = name
 
         self.type = self.ctx.cparser.typedefs[typename]
 
@@ -824,28 +782,30 @@ class StructureView(Widget):
     def render(self) -> Text:
         t = Text()
 
-        decoration_style = self.get_component_rich_style("structureview--field-decoration")
-        name_style = self.get_component_rich_style("structureview--struct-name")
+        style_decoration = get_effective_global_color(self, "peapp--decoration")
+        style_type = get_effective_global_color(self, "peapp--title")
+        style_name = get_effective_global_color(self, "peapp--key")
+        style_offset = get_effective_global_color(self, "peapp--decoration")
 
         # like: struct IMAGE_DOS_HEADER {
-        t.append("struct ", style=decoration_style)
-        t.append(self.name or self.type.name, style=name_style)
-        t.append(" @ ", style=decoration_style)
-        t.append(f"{self.address:08x}:", style=decoration_style)
+        t.append("struct ", style=style_decoration)
+        t.append(self.type.name, style=style_type)
+        t.append(" @ ", style=style_decoration)
+        t.append(f"{self.address:08x}:", style=style_decoration)
         t.append("\n")
 
         # use a table for formatting the structure fields,
         # so that alignment is easy.
+
+        # like:
+        #
+        #     Machine          =  IMAGE_FILE_MACHINE_AMD64          @  +0x0
+        #     TimeDateStamp    =  2020-02-14T09:27:34Z              @  +0x4
+        #     Characteristics  =  IMAGE_FILE_EXECUTABLE_IMAGE       @  +0x12
         table = rich.table.Table(box=None, show_header=False)
-
-        style_name = self.get_component_rich_style("structureview--field-name")
-        style_offset = self.get_component_rich_style("structureview--field-offset")
-        style_value = self.get_component_rich_style("structureview--field-value")
-        style_decoration = self.get_component_rich_style("structureview--field-decoration")
-
         table.add_column("name", style=style_name)
         table.add_column("=", style=style_decoration)
-        table.add_column("value", style=style_value)
+        table.add_column("value")
         table.add_column("@", style=style_decoration)
         table.add_column("offset", style=style_offset)
 
@@ -978,41 +938,9 @@ def dont_render(v: Any) -> str:
 
 
 class SectionView(Widget):
-    COMPONENT_CLASSES = {
-        "sectionview--key",
-        "sectionview--value",
-    }
-
     DEFAULT_CSS = """
         SectionView {
             height: auto;
-        }
-
-        SectionView .sectionview--address {
-            color: $accent;
-        }
-
-        SectionView .sectionview--title {
-            color: $secondary;
-        }
-
-        SectionView .sectionview--decoration {
-            color: $text-muted;
-        }
-
-        SectionView .sectionview--key {
-            color: $accent;
-        }
-
-        SectionView .sectionview--value {
-            color: $text;
-        }
-
-        SectionView .sectionview--table {
-            margin-left: 1;
-        }
-
-        SectionView .sectionview--binaryview {
         }
     """
 
@@ -1046,20 +974,16 @@ class SectionView(Widget):
         virtual_size = self.section.Misc_VirtualSize
 
         yield Line(
-            Static(self.section_name, classes="sectionview--title"),
-            Static(" section", classes="sectionview--decoration"),
-            Static(" @ ", classes="sectionview--decoration"),
-            Static(f"{raw_address:08x}-{raw_address + raw_size:08x}", classes="sectionview--decoration"),
-            Static(":", classes="sectionview--decoration"),
+            Static(self.section_name, classes="peapp--title"),
+            Static(f" section @ {raw_address:08x}-{raw_address + raw_size:08x}:", classes="peapp--decoration"),
         )
 
         table = rich.table.Table(box=None, show_header=False)
 
-        style_key = self.get_component_rich_style("sectionview--key")
-        style_value = self.get_component_rich_style("sectionview--value")
+        style_key = get_effective_global_color(self, "peapp--key")
 
         table.add_column("key", style=style_key)
-        table.add_column("value", style=style_value)
+        table.add_column("value")
 
         table.add_row("virtual address:", f"{virtual_address:08x}")
         table.add_row("virtual size:", f"{virtual_size:#x}")
@@ -1112,7 +1036,7 @@ class SectionView(Widget):
         ]
         table.add_row("characteristics:", render_bitflags(bits, self.section.Characteristics))
 
-        yield Static(table, classes="sectionview--table")
+        yield Static(table)
 
         for child in self.section_children:
             yield child
@@ -1124,39 +1048,9 @@ class SectionView(Widget):
 
 class SegmentView(Widget):
     """a view used for regions of the file not covered by a section"""
-
-    COMPONENT_CLASSES = {
-        "segmentview--key",
-        "segmentview--value",
-    }
-
     DEFAULT_CSS = """
         SegmentView {
             height: auto;
-        }
-
-        SegmentView .segmentview--address {
-            color: $accent;
-        }
-
-        SegmentView .segmentview--title {
-            color: $secondary;
-        }
-
-        SegmentView .segmentview--decoration {
-            color: $text-muted;
-        }
-
-        SegmentView .segmentview--key {
-            color: $accent;
-        }
-
-        SegmentView .segmentview--value {
-            color: $text;
-        }
-
-        SegmentView .segmentview--table {
-            margin-left: 1;
         }
     """
 
@@ -1180,13 +1074,8 @@ class SegmentView(Widget):
 
     def compose(self) -> ComposeResult:
         yield Line(
-            Static(self.segment, classes="segmentview--title"),
-            Static(" segment", classes="segmentview--decoration"),
-            Static(" @ ", classes="segmentview--decoration"),
-            Static(f"{self.address:08x}", classes="segmentview--decoration"),
-            Static("-", classes="segmentview--decoration"),
-            Static(f"{self.address + self.length:08x}", classes="segmentview--decoration"),
-            Static(":", classes="segmentview--decoration"),
+            Static(self.segment, classes="peapp--title"),
+            Static(f" segment @ {self.address:08x}-{self.address + self.length:08x}:", classes="peapp--decoration"),
         )
 
         for child in self.segment_children:
@@ -1200,26 +1089,6 @@ class ImportsView(Widget):
         ImportsView {
             height: auto;
         }
-
-        ImportsView .importsview--title {
-            color: $secondary;
-        }
-
-        ImportsView .importsview--heading {
-            color: $accent;
-        }
-
-        ImportsView .importsview--dll {
-            color: $accent;
-        }
-
-        ImportsView .importsview--symbol {
-            color: $text;
-        }
-
-        ImportsView .importsview--decoration {
-            color: $text-muted;
-        }
     """
 
     def __init__(
@@ -1234,10 +1103,14 @@ class ImportsView(Widget):
         self.address = address
 
     def compose(self) -> ComposeResult:
-        yield Line(Static("import directory table:", classes="importsview--title"))
+        yield Line(
+            Static("import directory table", classes="peapp--title"),
+            Static(":", classes="peapp--decoration"),
+        )
 
         yield Line(
-            Static("  imphash: ", classes="importsview--heading"),
+            Static("  imphash", classes="peapp--key"),
+            Static(": ", classes="peapp--decoration"),
             Static(self.ctx.pe.get_imphash()),
         )
 
@@ -1248,8 +1121,8 @@ class ImportsView(Widget):
 
             yield Line(
                 Static("  "),
-                Static(dll_name, classes="importsview--dll"),
-                Static(":", classes="importsview--decoration"),
+                Static(dll_name, classes="peapp--key"),
+                Static(":", classes="peapp--decoration"),
             )
 
             for entry in dll.imports:
@@ -1261,7 +1134,7 @@ class ImportsView(Widget):
                     symbol_name = entry.name.decode("ascii")
                     yield Line(
                         Static("    "),
-                        Static(symbol_name, classes="importsview--symbol"),
+                        Static(symbol_name),
                     )
 
 
@@ -1269,22 +1142,6 @@ class ExportsView(Widget):
     DEFAULT_CSS = """
         ExportsView {
             height: auto;
-        }
-
-        ExportsView .exportsview--title {
-            color: $secondary;
-        }
-
-        ExportsView .exportsview--heading {
-            color: $accent;
-        }
-
-        ExportsView .exportsview--symbol {
-            color: $text;
-        }
-
-        ExportsView .exportsview--decoration {
-            color: $text-muted;
         }
     """
 
@@ -1300,7 +1157,10 @@ class ExportsView(Widget):
         self.address = address
 
     def compose(self) -> ComposeResult:
-        yield Line(Static("export directory table:", classes="exportsview--title"))
+        yield Line(
+            Static("export directory table", classes="peapp--title"),
+            Static(":", classes="peapp--decoration"),
+        )
 
         if not hasattr(self.ctx.pe, "DIRECTORY_ENTRY_EXPORT"):
             yield Line(
@@ -1314,23 +1174,28 @@ class ExportsView(Widget):
                 dll_name = "(invalid)"
 
             yield Line(
-                Static("  name:      ", classes="exportsview--heading"),
+                Static("  name", classes="peapp--key"),
+                Static(":      ", classes="peapp--decoration"),
                 Static(dll_name),
             )
 
             ts = self.ctx.pe.DIRECTORY_ENTRY_EXPORT.struct.TimeDateStamp
             yield Line(
-                Static("  timestamp: ", classes="exportsview--heading"),
+                Static("  timestamp", classes="peapp--key"),
+                Static(": ", classes="peapp--decoration"),
                 Static(render_timestamp(ts)),
             )
 
-            yield Line(Static("  symbols: ", classes="exportsview--heading"))
+            yield Line(
+                Static("  symbols", classes="peapp--key"),
+                Static(": ", classes="peapp--decoration"),
+            )
 
             for entry in self.ctx.pe.DIRECTORY_ENTRY_EXPORT.symbols:
                 symbol_name = entry.name.decode("ascii")
                 yield Line(
                     Static("    "),
-                    Static(symbol_name, classes="exportsview--symbol"),
+                    Static(symbol_name),
                 )
 
 
@@ -1422,6 +1287,28 @@ class NavView(Static):
 class PEApp(App):
     TITLE = "pe"
     DEFAULT_CSS = """
+        /* major name, such as structure or section name */
+        .peapp--title {
+            color: $secondary;
+        }
+
+        /* minor name, such as import dll name */
+        .peapp--key {
+            color: $accent;
+        }
+
+        .peapp--address {
+            color: $accent;
+        }
+
+        .peapp--decoration {
+            color: $text-muted;
+        }
+
+        .peapp--muted {
+            color: $text-muted;
+        }
+
         .peapp--pane {
             /* appear as a new layer on top of the screen */
             background: $boost;
@@ -1482,25 +1369,30 @@ class PEApp(App):
         self.title = f"pe: {self.ctx.path.name}"
 
     @dataclass
+    class StructureAt:
+        address: int
+        type: str
+
+    @dataclass
     class Region:
         address: int
         length: int
         type: Literal["segment"] | Literal["section"]
         section: Optional[pefile.SectionStructure] = None
-        children: List[Any] = dataclasses.field(default_factory=list)
+        children: List["PEApp.StructureAt"] = dataclasses.field(default_factory=list)
 
         @property
         def end(self) -> int:
             return self.address + self.length
 
-    def collect_file_structures(self):
-        yield (self.ctx.pe.DOS_HEADER.get_file_offset(), "IMAGE_DOS_HEADER", None)
-        yield (self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_FILE_HEADER", None)
+    def collect_file_structures(self) -> Iterable["PEApp.StructureAt"]:
+        yield self.StructureAt(self.ctx.pe.DOS_HEADER.get_file_offset(), "IMAGE_DOS_HEADER")
+        yield self.StructureAt(self.ctx.pe.FILE_HEADER.get_file_offset(), "IMAGE_FILE_HEADER")
 
         if self.ctx.bitness == 32:
-            yield (self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER32", None)
+            yield self.StructureAt(self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER32")
         elif self.ctx.bitness == 64:
-            yield (self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER64", None)
+            yield self.StructureAt(self.ctx.pe.OPTIONAL_HEADER.get_file_offset(), "IMAGE_OPTIONAL_HEADER64")
         else:
             raise ValueError(f"unknown bitness: {self.ctx.bitness}")
 
@@ -1514,10 +1406,10 @@ class PEApp(App):
             directory_offset = self.ctx.pe.get_offset_from_rva(directory.VirtualAddress)
 
             if name == "IMAGE_DIRECTORY_ENTRY_IMPORT":
-                yield (directory_offset, "DIRECTORY_ENTRY_IMPORT", None)
+                yield self.StructureAt(directory_offset, "DIRECTORY_ENTRY_IMPORT")
 
             elif name == "IMAGE_DIRECTORY_ENTRY_EXPORT":
-                yield (directory_offset, "DIRECTORY_ENTRY_EXPORT", None)
+                yield self.StructureAt(directory_offset, "DIRECTORY_ENTRY_EXPORT")
 
             # DIRECTORY_ENTRY_RESOURCE (ResourceDirData instance)
             # DIRECTORY_ENTRY_DEBUG (list of DebugData instances)
@@ -1552,9 +1444,8 @@ class PEApp(App):
         regions.sort(key=lambda s: s.address)
 
         for structure in self.collect_file_structures():
-            offset, type, name = structure
             for region in regions:
-                if offset >= region.address and offset < region.end:
+                if structure.address >= region.address and structure.address < region.end:
                     region.children.append(structure)
                     break
 
@@ -1575,14 +1466,13 @@ class PEApp(App):
             children: List[Widget] = []
 
             for child in region.children:
-                offset, type, name = child
-                if type == "DIRECTORY_ENTRY_IMPORT":
-                    children.append(ImportsView(self.ctx, offset, classes="peapp--pane", id=next(id_generator)))
-                elif type == "DIRECTORY_ENTRY_EXPORT":
-                    children.append(ExportsView(self.ctx, offset, classes="peapp--pane", id=next(id_generator)))
+                if child.type == "DIRECTORY_ENTRY_IMPORT":
+                    children.append(ImportsView(self.ctx, child.address, classes="peapp--pane", id=next(id_generator)))
+                elif child.type == "DIRECTORY_ENTRY_EXPORT":
+                    children.append(ExportsView(self.ctx, child.address, classes="peapp--pane", id=next(id_generator)))
                 else:
                     children.append(
-                        StructureView(self.ctx, offset, type, name, classes="peapp--pane", id=next(id_generator))
+                        StructureView(self.ctx, child.address, child.type, classes="peapp--pane", id=next(id_generator))
                     )
 
             if region.type == "segment":
