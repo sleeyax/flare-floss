@@ -25,6 +25,4 @@ def test_query_db():
     assert s.string == '!This program cannot be run in DOS mode.'
     assert s.encoding == 'ascii'
     assert s.global_count == 424466
-    assert s.malware_count == None
-    assert s.goodware_count == None
     assert s.location == None

@@ -17,8 +17,6 @@ class StringGlobalPrevalence(msgspec.Struct):
     string: str
     encoding: Encoding
     global_count: int
-    malware_count: int | None
-    goodware_count: int | None
     location: Location | None
 
 
