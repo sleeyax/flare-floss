@@ -15,6 +15,7 @@ requirements = [
     "networkx==2.5.1",
     "halo==0.0.31",
     "rich==13.3.4",
+    "msgspec==0.14.2",
 ]
 
 # this sets __version__
