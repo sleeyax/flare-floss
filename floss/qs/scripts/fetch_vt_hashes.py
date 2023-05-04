@@ -69,6 +69,9 @@ import datetime
 import hashlib
 import json
 import os
+import bz2
+import io
+import requests
 import shelve
 import pathlib
 import sys
@@ -76,7 +79,7 @@ import logging
 import argparse
 from typing import Any, Iterator, List
 
-import virustotal3.enterprise
+import virustotal3.errors
 
 
 logger = logging.getLogger(__name__)
@@ -135,6 +138,72 @@ def format_timestamp(dt: datetime.datetime) -> str:
     return f"{dt.year}{dt.month:02}{dt.day:02}{dt.hour:02}{dt.minute:02}"
 
 
+VirusTotalApiError = virustotal3.errors.VirusTotalApiError
+
+
+def _raise_exception(response):
+    """Raise Exception
+
+    Function to raise an exception using the error messages returned by the API.
+
+    Parameters:
+        response (dict) Reponse containing the error returned by the API.
+
+    vendored from: https://github.com/traceflow/virustotal3/blob/58dcfab/virustotal3/enterprise.py
+    """
+    # https://developers.virustotal.com/v3.0/reference#errors
+    raise VirusTotalApiError(response.text)
+
+
+def _get_feed(api_key, type_, time, timeout=None):
+    """ Get a minute from a feed
+
+    Parameters:
+        api_key (str): VT key
+        type_ (str): type of feed to get
+        time (str): YYYYMMDDhhmm
+        timeout (float, optional): The amount of time in seconds the request should wait before timing out.
+    
+    Returns:
+        StringIO: each line is a json string for one report
+
+    vendored from: https://github.com/traceflow/virustotal3/blob/58dcfab/virustotal3/enterprise.py
+    """
+    if api_key is None:
+        raise Exception("You must provide a valid API key")
+
+    response = requests.get('https://www.virustotal.com/api/v3/feeds/{}/{}'.format(type_, time),
+                            headers={'x-apikey': api_key,
+                                        'Content-Type': 'application/json'},
+                            timeout=timeout)
+
+    if response.status_code != 200:
+        _raise_exception(response)
+
+    return io.BytesIO(bz2.decompress(response.content))
+
+
+def file_feed(api_key, time, timeout=None):
+    """Get a file feed batch for a given date, by the minute.
+
+    From the official documentation:
+    "Time 201912010802 will return the batch corresponding to December 1st, 2019 08:02 UTC.
+    You can download batches up to 7 days old, and the most recent batch has always a 60 minutes
+    lag with respect with to the current time."
+
+    Parameters:
+        api_key (str): VirusTotal key
+        time (str): YYYYMMDDhhmm
+        timeout (float, optional): The amount of time in seconds the request should wait before timing out.
+    
+    Returns:
+        StringIO: each line is a json string for one report
+
+    vendored from: https://github.com/traceflow/virustotal3/blob/58dcfab/virustotal3/enterprise.py
+    """
+    return _get_feed(api_key, "files", time, timeout=timeout)
+
+
 def fetch_feed(api_key: str, ts: datetime.datetime) -> Iterator[Any]:
     ts = format_timestamp(ts)
 
@@ -146,9 +215,9 @@ def fetch_feed(api_key: str, ts: datetime.datetime) -> Iterator[Any]:
     with shelve.open(p) as db:
         if ts not in db:
             try:
-                db[ts] = virustotal3.enterprise.file_feed(api_key, ts)
+                db[ts] = file_feed(api_key, ts)
             except Exception as e:
-                logger.warning("error: %s", str(e))
+                logger.warning("error: %s", str(e), exc_info=True)
                 return
 
         feed = db[ts]
@@ -202,7 +271,7 @@ def main():
                 if any(map(lambda prefix: magic.startswith(prefix), ["PE32", "ELF", "MS-DOS", "Mach-O", "COM"])):
                     print(line["attributes"]["sha256"])
             except Exception as e:
-                logger.warning("error: %s", str(e))
+                logger.warning("error: %s", str(e), exc_info=True)
                 continue
 
         current += datetime.timedelta(minutes=1)
