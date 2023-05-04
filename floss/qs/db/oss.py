@@ -10,8 +10,8 @@ class OpenSourceString(msgspec.Struct):
     string: str
     library_name: str
     library_version: str
-    file_path: str
-    function_name: str
+    file_path: str | None = None
+    function_name: str | None = None
     line_number: int | None = None
 
 
