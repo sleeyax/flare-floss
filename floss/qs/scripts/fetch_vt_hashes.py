@@ -191,12 +191,19 @@ def main():
     while format_timestamp(current) < format_timestamp(end):
         logger.info("fetching feed: %s", current.isoformat())
         for line in fetch_feed(API_KEY, current):
-            if line["type"] != "file":
-                continue
+            try:
+                if line.get("type") != "file":
+                    continue
 
-            magic = line["attributes"]["magic"]
-            if any(map(lambda prefix: magic.startswith(prefix), ["PE32", "ELF", "MS-DOS", "Mach-O", "COM"])):
-                print(line["attributes"]["sha256"])
+                if "magic" not in line.get("attributes", {}) or "sha256" not in line.get("attributes", {}):
+                    continue
+                
+                magic = line["attributes"]["magic"]
+                if any(map(lambda prefix: magic.startswith(prefix), ["PE32", "ELF", "MS-DOS", "Mach-O", "COM"])):
+                    print(line["attributes"]["sha256"])
+            except Exception as e:
+                logger.warning("error: %s", str(e))
+                continue
 
         current += datetime.timedelta(minutes=1)
 
