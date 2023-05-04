@@ -16,6 +16,7 @@ requirements = [
     "halo==0.0.31",
     "rich==13.3.4",
     "msgspec==0.14.2",
+    "dnfile==0.13.0",
 ]
 
 # this sets __version__
