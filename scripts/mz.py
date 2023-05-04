@@ -2,6 +2,7 @@
     "textual==0.22.3",
     "rich==13.3.3",
     "dissect.cstruct==3.6",
+    "pefile==2023.2.7",
 
     TODO:
       - other structures
@@ -26,6 +27,7 @@ import pefile
 import rich.table
 import rich.console
 from dissect import cstruct
+import textual.css.query
 from rich.text import Text
 from rich.style import Style
 from textual.app import App, ComposeResult
@@ -1345,12 +1347,20 @@ class MainScreen(Screen):
         target.scroll_visible(top=True, animate=False)
 
     def action_nav_imports(self):
-        target = self.query_one("ImportsView")
-        target.scroll_visible(top=True, animate=False)
+        try:
+            target = self.query_one("ImportsView")
+        except textual.css.query.NoMatches:
+            pass
+        else:
+            target.scroll_visible(top=True, animate=False)
 
     def action_nav_exports(self):
-        target = self.query_one("ExportsView")
-        target.scroll_visible(top=True, animate=False)
+        try:
+            target = self.query_one("ExportsView")
+        except textual.css.query.NoMatches:
+            pass
+        else:
+            target.scroll_visible(top=True, animate=False)
 
     def action_scroll_down(self):
         self.scroll_relative(
