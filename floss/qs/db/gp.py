@@ -1,11 +1,10 @@
 import gzip
 import pathlib
-from typing import Dict, Literal, Mapping, Sequence, Set, Tuple
+from typing import List, Tuple, Literal, Mapping
 from collections import defaultdict
 from dataclasses import dataclass
 
 import msgspec
-
 
 Encoding = Literal["ascii"] | Literal["utf-16"]
 # header | gap | overlay
@@ -22,14 +21,16 @@ class StringGlobalPrevalence(msgspec.Struct):
 
 @dataclass
 class StringGlobalPrevalenceDatabase:
-    metadata_by_string: Mapping[Tuple[str, Encoding], Sequence[StringGlobalPrevalence]]
+    # TODO timestamp: datetime.datetime
+    # TODO note: str  # manual notes to explain the data source(s)
+    metadata_by_string: Mapping[Tuple[str, Encoding], List[StringGlobalPrevalence]]
 
     def __len__(self) -> int:
         return len(self.metadata_by_string)
 
     @classmethod
     def from_file(cls, path: pathlib.Path) -> "StringGlobalPrevalenceDatabase":
-        metadata_by_string: Mapping[str, Set[StringGlobalPrevalence]] = defaultdict(list)
+        metadata_by_string: Mapping[Tuple[str, Encoding], List[StringGlobalPrevalence]] = defaultdict(list)
 
         decoder = msgspec.json.Decoder(type=StringGlobalPrevalence)
         for line in gzip.decompress(path.read_bytes()).split(b"\n"):
