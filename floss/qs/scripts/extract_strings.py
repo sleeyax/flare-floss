@@ -1,15 +1,18 @@
+# Copyright (C) 2023 Mandiant, Inc. All Rights Reserved.
+
+# examples:
+# $ extract_strings.py -d --pes C:\Windows cwinpes
+
 import os
 import sys
 import json
-import uuid
-import random
 import hashlib
 import logging
 import argparse
 import datetime
 import collections
 import dataclasses
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 import dnfile
 import pefile
@@ -37,7 +40,7 @@ class PeStrings:
     sha256: str
     timestamp: datetime.datetime
     dotnet: bool
-    strings: FileString
+    strings: List[FileString]
 
 
 def match(path: str, suffixes: Tuple[str, ...], prefixes: Tuple[str, ...]):
@@ -61,6 +64,13 @@ def find_file_paths(path: str, suffixes: Tuple[str, ...] = None, prefixes: Tuple
             for file in files:
                 if match(file, suffixes, prefixes):
                     file_path = os.path.join(root, file)
+
+                    if file_path.startswith(
+                        (r"C:\Windows\WinSxS",)  # can be large, stores install/backup related files
+                    ):
+                        logger.info("skip %s", file_path)
+                        continue
+
                     logger.debug("found file: %s", os.path.abspath(os.path.normpath(file_path)))
                     yield file_path
 
@@ -111,8 +121,12 @@ def extract_pes(dir_path, outdir):
                         logger.warning("skipping file with existing data: %s", file_path)
                     logger.info("updating file name: %s", outfile)
 
-        with open(file_path, "rb") as f:
-            binary_data = f.read()
+        try:
+            with open(file_path, "rb") as f:
+                binary_data = f.read()
+        except PermissionError as e:
+            logger.warning("%s", e)
+            continue
 
         try:
             pe = pefile.PE(data=binary_data)
