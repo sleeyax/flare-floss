@@ -1,13 +1,13 @@
 """
-    "textual==0.24.1",                                                                                              │    │
-    "rich==13.3.5",                                                                                                 │    │
-    "dissect.cstruct==3.6",                                                                                         │    │
-    "pefile==2023.2.7",                                                                                             │    │
-                                                                                                                    │    │
-    TODO:                                                                                                           │    │
-      - other structures                                                                                            │    │
-      - structure & hexview side by side                                                                            │    │
-      - on hover structure highlight the hex                                                                        │    │
+    "textual==0.24.1",
+    "rich==13.3.5",
+    "dissect.cstruct==3.6",
+    "pefile==2023.2.7",
+
+    TODO:
+      - other structures
+      - structure & hexview side by side
+      - on hover structure highlight the hex
 """
 import re
 import asyncio
@@ -1677,6 +1677,8 @@ class PEApp(App):
 
 
 async def main(argv=None):
+    from textual.logging import TextualHandler
+
     if argv is None:
         argv = sys.argv[1:]
 
@@ -1725,6 +1727,7 @@ if __name__ == "__main__":
     import sys
     import mmap
     import argparse
+
 
     sys.exit(asyncio.run(main()))
 elif __name__ == "__pyodide__":
