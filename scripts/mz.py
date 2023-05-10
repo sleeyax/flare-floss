@@ -1,22 +1,18 @@
 """
-    "textual==0.22.3",
-    "rich==13.3.3",
-    "dissect.cstruct==3.6",
-    "pefile==2023.2.7",
-
-    TODO:
-      - other structures
-      - structure & hexview side by side
-      - on hover structure highlight the hex
+    "textual==0.24.1",                                                                                              │    │
+    "rich==13.3.5",                                                                                                 │    │
+    "dissect.cstruct==3.6",                                                                                         │    │
+    "pefile==2023.2.7",                                                                                             │    │
+                                                                                                                    │    │
+    TODO:                                                                                                           │    │
+      - other structures                                                                                            │    │
+      - structure & hexview side by side                                                                            │    │
+      - on hover structure highlight the hex                                                                        │    │
 """
-import os
 import re
-import sys
-import mmap
 import asyncio
 import logging
 import pathlib
-import argparse
 import textwrap
 import itertools
 import dataclasses
@@ -27,7 +23,6 @@ import pefile
 import rich.table
 import rich.console
 from dissect import cstruct
-import textual.css.query
 from rich.text import Text
 from rich.style import Style
 from textual.app import App, ComposeResult
@@ -36,7 +31,6 @@ from textual.strip import Strip
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.binding import Binding
-from textual.logging import TextualHandler
 from textual.widgets import Label, Footer, Static, TabPane, TabbedContent
 from textual.geometry import Size
 from textual.reactive import reactive
@@ -124,6 +118,41 @@ class Context:
             return 64
         else:
             raise ValueError("unknown bitness")
+
+    @classmethod
+    def from_bytes(cls, path: pathlib.Path, buf: bytes):
+        # premature optimization consideration:
+        # do the parsing within the app, in case the file is really large and this is laggy.
+        # we can introduce background parsing later.
+        pe = pefile.PE(data=buf, fast_load=False)
+
+        cparser = cstruct.cstruct()
+        cparser.load(STRUCTURES)
+
+        renderers = {
+            "IMAGE_FILE_HEADER.TimeDateStamp": render_timestamp,
+            "IMAGE_FILE_HEADER.Characteristics": render_characteristics,
+            "IMAGE_OPTIONAL_HEADER32.DllCharacteristics": render_dll_characteristics,
+            "IMAGE_OPTIONAL_HEADER32.CheckSum": render_u32,
+            "IMAGE_OPTIONAL_HEADER64.DllCharacteristics": render_dll_characteristics,
+            "IMAGE_OPTIONAL_HEADER64.CheckSum": render_u32,
+            # parsed in more detail elsewhere.
+            "IMAGE_OPTIONAL_HEADER32.DataDirectory": dont_render,
+            "IMAGE_OPTIONAL_HEADER64.DataDirectory": dont_render,
+        }
+
+        key_fields = {
+            "IMAGE_FILE_HEADER": {"Machine", "TimeDateStamp", "Characteristics"},
+            "IMAGE_OPTIONAL_HEADER32": {"ImageBase", "Subsystem", "CheckSum", "DllCharacteristics"},
+            "IMAGE_OPTIONAL_HEADER64": {"ImageBase", "Subsystem", "CheckSum", "DllCharacteristics"},
+            "IMAGE_DATA_DIRECTORY": {"VirtualAddress", "Size"},
+        }
+
+        strings = list(
+            sorted(itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset)
+        )
+
+        return cls(path, buf, strings, pe, cparser, renderers, key_fields)
 
 
 def get_global_style(node, classname: str) -> Styles:
@@ -1520,6 +1549,49 @@ class MainScreen(Screen):
         yield Footer()
 
 
+class TitleScreen(Screen):
+    DEFAULT_CSS = """
+        TitleScreen {
+            height: 100%;
+            width: 100%;
+            align: center middle;
+        }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Label(textwrap.dedent("""\
+          _____                   _____          
+         /\    \                 /\    \         
+        /::\____\               /::\    \        
+       /::::|   |               \:::\    \       
+      /:::::|   |                \:::\    \      
+     /::::::|   |                 \:::\    \     
+    /:::/|::|   |                  \:::\    \    
+   /:::/ |::|   |                   \:::\    \   
+  /:::/  |::|___|______              \:::\    \  
+ /:::/   |::::::::\    \              \:::\    \ 
+/:::/    |:::::::::\____\______________\:::\____\ 
+\::/    / ~~~~~/:::/    \::::::::::::::::::/    /
+ \/____/      /:::/    / \::::::::::::::::/    / 
+             /:::/    /   \:::\~~~~\~~~~~~-----
+            /:::/    /     \:::\    \            
+           /:::/    /       \:::\    \           
+          /:::/    /         \:::\    \          
+         /:::/    /           \:::\    \         
+        /:::/    /             \:::\____\        
+        \::/    /               \::/    /        
+         \/____/                 \/____/         
+
+            mz: yet another PE viewer
+
+
+
+           drag 'n drop a PE file here
+        """.rstrip()), classes="logo")
+        # TODO: don't ask for DnD when on console
+        # or handle that event.
+
+
 class PEApp(App):
     TITLE = "pe"
     DEFAULT_CSS = """
@@ -1566,46 +1638,42 @@ class PEApp(App):
         }
     """
 
-    def __init__(self, path: pathlib.Path, buf: bytearray) -> None:
-        super().__init__()
-
-        # premature optimization consideration:
-        # do the parsing within the app, in case the file is really large and this is laggy.
-        # we can introduce background parsing later.
-        pe = pefile.PE(data=buf, fast_load=False)
-
-        cparser = cstruct.cstruct()
-        cparser.load(STRUCTURES)
-
-        renderers = {
-            "IMAGE_FILE_HEADER.TimeDateStamp": render_timestamp,
-            "IMAGE_FILE_HEADER.Characteristics": render_characteristics,
-            "IMAGE_OPTIONAL_HEADER32.DllCharacteristics": render_dll_characteristics,
-            "IMAGE_OPTIONAL_HEADER32.CheckSum": render_u32,
-            "IMAGE_OPTIONAL_HEADER64.DllCharacteristics": render_dll_characteristics,
-            "IMAGE_OPTIONAL_HEADER64.CheckSum": render_u32,
-            # parsed in more detail elsewhere.
-            "IMAGE_OPTIONAL_HEADER32.DataDirectory": dont_render,
-            "IMAGE_OPTIONAL_HEADER64.DataDirectory": dont_render,
-        }
-
-        key_fields = {
-            "IMAGE_FILE_HEADER": {"Machine", "TimeDateStamp", "Characteristics"},
-            "IMAGE_OPTIONAL_HEADER32": {"ImageBase", "Subsystem", "CheckSum", "DllCharacteristics"},
-            "IMAGE_OPTIONAL_HEADER64": {"ImageBase", "Subsystem", "CheckSum", "DllCharacteristics"},
-            "IMAGE_DATA_DIRECTORY": {"VirtualAddress", "Size"},
-        }
-
-        strings = list(
-            sorted(itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)), key=lambda s: s.offset)
-        )
-
-        self.ctx = Context(path, buf, strings, pe, cparser, renderers, key_fields)
-
-        self.title = f"pe: {self.ctx.path.name}"
+    def __init__(self, path: pathlib.Path | None = None, buf: bytearray | None = None, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.title = "mz"
+        self.path = path
+        self.buf = buf
 
     def on_mount(self):
-        self.push_screen(MainScreen(self.ctx))
+        if self.path and self.buf:
+            # if the App was initialized with path/buf, render them immediately
+            # otherwise, see on_notified
+            ctx = Context.from_bytes(self.path, self.buf)
+            self.push_screen(MainScreen(ctx))
+        else:
+            self.push_screen(TitleScreen())
+
+    def on_notified(self, message):
+        """application-specific message provided by the application host"""
+        try:
+            import js
+        except ImportError:
+            # not in pyodide environment,
+            # so we won't be getting these messages
+            return
+
+        path = pathlib.Path(message.data.path)
+        buf = bytes(message.data.buf.to_py())
+
+        try:
+            ctx = Context.from_bytes(path, buf)
+        except Exception as e:
+            js.console.log("error: failed to parse PE: " + str(e))
+            return
+
+        # either TitleScreen or existing MainScreen
+        self.pop_screen()
+        self.push_screen(MainScreen(ctx))
 
 
 async def main(argv=None):
@@ -1653,4 +1721,21 @@ async def main(argv=None):
 
 
 if __name__ == "__main__":
+    import os
+    import sys
+    import mmap
+    import argparse
+
     sys.exit(asyncio.run(main()))
+elif __name__ == "__pyodide__":
+    app = PEApp()
+
+    # pyodide provides an async event loop
+    # (in fact, we're already running in a coroutine)
+    # so we need to use that one, and not directly call app.run().
+    loop = asyncio.get_running_loop()
+    
+    asyncio.run_coroutine_threadsafe(
+        app.run_async(),
+        loop=loop,
+    )
