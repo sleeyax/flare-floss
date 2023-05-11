@@ -240,6 +240,8 @@ def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Seq
 
 
 def main():
+    # set environment variable NO_COLOR=1 to disable color output.
+    # set environment variable FORCE_COLOR=1 to force color output, such as when piping to a pager.
     parser = argparse.ArgumentParser(description="Extract human readable strings from binary data, quantum-style.")
     parser.add_argument("path", help="file or path to analyze")
     logging_group = parser.add_argument_group("logging arguments")
