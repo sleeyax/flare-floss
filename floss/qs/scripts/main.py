@@ -6,7 +6,7 @@ import logging
 import pathlib
 import argparse
 import itertools
-from typing import Set, Dict, Literal, Iterable
+from typing import Set, Dict, Literal, Iterable, Sequence
 from dataclasses import dataclass
 
 from rich.text import Text
@@ -192,49 +192,7 @@ def render_string(
     return line
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Extract human readable strings from binary data, quantum-style.")
-    parser.add_argument("path", help="file or path to analyze")
-    logging_group = parser.add_argument_group("logging arguments")
-    logging_group.add_argument("-d", "--debug", action="store_true", help="enable debugging output on STDERR")
-    logging_group.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        help="disable all status output except fatal errors",
-    )
-    args = parser.parse_args()
-
-    if args.quiet:
-        logging.basicConfig(level=logging.WARNING)
-        logging.getLogger().setLevel(logging.WARNING)
-    elif args.debug:
-        logging.basicConfig(level=logging.DEBUG)
-        logging.getLogger().setLevel(logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
-        logging.getLogger().setLevel(logging.INFO)
-
-    path = pathlib.Path(args.path)
-    if not path.exists():
-        logging.error("%s does not exist", path)
-        return 1
-
-    with path.open("rb") as f:
-        WHOLE_FILE = 0
-
-        # TODO: needs to be tested on Windows, macOS
-        with mmap.mmap(f.fileno(), length=WHOLE_FILE, access=mmap.ACCESS_READ) as mm:
-            # treat the mmap as a readable bytearray
-            buf: bytearray = mm  # type: ignore
-
-            strings = list(
-                sorted(
-                    itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)),
-                    key=lambda s: s.offset,
-                )
-            )
-
+def query_global_prevalence_database(string: str) -> Sequence[Tag]:
     global_prevalence = {
         "!This program cannot be run in DOS mode.",
         "Rich",
@@ -247,6 +205,14 @@ def main():
         "February",
     }
 
+    if string in global_prevalence:
+        return ("#common",)
+
+    else:
+        return ()
+
+
+def query_library_string_database(string: str) -> Sequence[Tag]:
     libraries = {
         "zlib": {
             " 1.2.13 Copyright 1995-2022 Jean-loup Gailly and Mark Adler ",
@@ -334,17 +300,86 @@ def main():
         },
     }
 
+    tags = []
+
+    for library, strings in libraries.items():
+        if string in strings:
+            tags.append(f"#{library}")
+
+    return tags
+
+
+def query_winapi_name_database(string: str) -> Sequence[Tag]:
+    dll_names = {
+        "kernel32.dll",
+        "user32.dll",
+    }
+
+    api_names = {
+        "CreateFileA",
+        "CreateFileW",
+    }
+
+    if string.lower() in dll_names:
+        return ("#winapi",)
+
+    if string in api_names:
+        return ("#winapi",)
+
+    return ()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Extract human readable strings from binary data, quantum-style.")
+    parser.add_argument("path", help="file or path to analyze")
+    logging_group = parser.add_argument_group("logging arguments")
+    logging_group.add_argument("-d", "--debug", action="store_true", help="enable debugging output on STDERR")
+    logging_group.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="disable all status output except fatal errors",
+    )
+    args = parser.parse_args()
+
+    if args.quiet:
+        logging.basicConfig(level=logging.WARNING)
+        logging.getLogger().setLevel(logging.WARNING)
+    elif args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+        logging.getLogger().setLevel(logging.INFO)
+
+    path = pathlib.Path(args.path)
+    if not path.exists():
+        logging.error("%s does not exist", path)
+        return 1
+
+    with path.open("rb") as f:
+        WHOLE_FILE = 0
+
+        # TODO: needs to be tested on Windows, macOS
+        with mmap.mmap(f.fileno(), length=WHOLE_FILE, access=mmap.ACCESS_READ) as mm:
+            # treat the mmap as a readable bytearray
+            buf: bytearray = mm  # type: ignore
+
+            strings = list(
+                sorted(
+                    itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)),
+                    key=lambda s: s.offset,
+                )
+            )
+
     tagged_strings = list(map(lambda s: TaggedString(s, set()), strings))
 
     for string in tagged_strings:
         key = string.string.string
 
-        if key in global_prevalence:
-            string.tags.add(Tag("#common"))
-
-        for library, library_strings in libraries.items():
-            if key in library_strings:
-                string.tags.add(Tag(f"#{library}"))
+        string.tags.update(query_global_prevalence_database(key))
+        string.tags.update(query_library_string_database(key))
+        string.tags.update(query_winapi_name_database(key))
 
     console = Console()
     tag_rules = {
@@ -352,6 +387,7 @@ def main():
         "#zlib": "mute",
         "#bzip2": "mute",
         "#sqlite3": "mute",
+        "#winapi": "mute",
     }
     for string in tagged_strings:
         console.print(render_string(console.width, string, tag_rules))
