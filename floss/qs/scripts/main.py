@@ -81,6 +81,15 @@ def extract_unicode_strings(
             pass
 
 
+MUTED_STYLE = Style(color="gray50")
+DEFAULT_STYLE = Style()
+HIGHLIGHT_STYLE = Style(color="yellow")
+
+def Span(text: str, style: Style = DEFAULT_STYLE) -> Text:
+    """convenience function for single-line, styled text region"""
+    return Text(text, style=style, no_wrap=True, overflow="ellipsis", end="")
+
+
 def render_string(
     width: int,
     s: TaggedString,
@@ -118,18 +127,11 @@ def render_string(
     RIGHT_WIDTH = ADDRESS_WIDTH + PADDING_WIDTH + TAG_WIDTH + PADDING_WIDTH
     LEFT_WIDTH = width - RIGHT_WIDTH
 
-    MUTED = Style(color="gray50")
-    DEFAULT = Style()
-    HIGHLIGHT = Style(color="yellow")
-
-    def Span(text: str, style: Style = DEFAULT) -> Text:
-        return Text(text, style=style, no_wrap=True, overflow="ellipsis", end="")
-
     line = Text()
 
-    string_style = DEFAULT
+    string_style = DEFAULT_STYLE
     for tag in s.tags:
-        if string_style == HIGHLIGHT:
+        if string_style == HIGHLIGHT_STYLE:
             # highlight overrules mute.
             # if we're already highlight, don't mute
             continue
@@ -138,11 +140,11 @@ def render_string(
         rule = tag_rules.get(tag, "mute")
         if rule == "highlight":
             # upgrade to highlight
-            string_style = HIGHLIGHT
+            string_style = HIGHLIGHT_STYLE
         elif rule == "mute":
             # default -> mute
             # mute -> mute
-            string_style = MUTED
+            string_style = MUTED_STYLE
         else:
             raise ValueError(f"unknown tag rule: {rule}")
 
@@ -163,12 +165,12 @@ def render_string(
 
     tags = Text()
     for i, tag in enumerate(s.tags):
-        tag_style = DEFAULT
+        tag_style = DEFAULT_STYLE
         rule = tag_rules.get(tag, "mute")
         if rule == "highlight":
-            tag_style = HIGHLIGHT
+            tag_style = HIGHLIGHT_STYLE
         elif rule == "mute":
-            tag_style = MUTED
+            tag_style = MUTED_STYLE
         else:
             raise ValueError(f"unknown tag rule: {rule}")
 
@@ -189,7 +191,7 @@ def render_string(
         padding_width = len(addr_chars) - len(unpadded)
 
         addr = Span("")
-        addr.append_text(Span("0" * padding_width, style=MUTED))
+        addr.append_text(Span("0" * padding_width, style=MUTED_STYLE))
         addr.append_text(Span(unpadded, style=Style(color="blue")))
         line.append_text(addr)
 
