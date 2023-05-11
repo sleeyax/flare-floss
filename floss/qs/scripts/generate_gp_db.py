@@ -11,15 +11,13 @@
 
 import os
 import sys
-import gzip
 import json
 import logging
 import argparse
 import collections
-from typing import List, Tuple, Mapping
+from typing import Tuple, Mapping
 
-import msgspec
-from floss.qs.db.gp import Encoding, StringGlobalPrevalence, StringGlobalPrevalenceDatabase
+from floss.qs.db.gp import StringGlobalPrevalence, StringGlobalPrevalenceDatabase
 from floss.qs.scripts.extract_strings import PeStrings
 
 MIN_COUNT = 500
@@ -35,6 +33,7 @@ def generate_gp_db(path: str, min_count: int, type_: str) -> "StringGlobalPreval
         raise IOError(f"path {path} is not a directory")
 
     db: Mapping[Tuple[str, str, str], int] = collections.defaultdict(int)
+    seen_hashes = set()
     nfiles = 0
     nstrings = 0
     for root, dirs, files in os.walk(path):
@@ -52,18 +51,21 @@ def generate_gp_db(path: str, min_count: int, type_: str) -> "StringGlobalPreval
                     logger.debug("skipping unwanted type %s: %s", dotnative, file_path)
                     continue
 
+                if pestrings.sha256 in seen_hashes:
+                    logger.debug("skipping already indexed file with sha256 hash %s: %s", pestrings.sha256, file_path)
+                seen_hashes.add(pestrings.sha256)
+
                 nstrings += len(pestrings.strings)
                 for s in pestrings.strings:
                     db[(s["string"], s["encoding"], s["location"])] += 1
 
     print(f"scanned {nfiles:,} files with {nstrings:,} strings")
 
-    metadata_by_string: Mapping[Tuple[str, Encoding], List[StringGlobalPrevalence]] = collections.defaultdict(list)
+    gpdb = StringGlobalPrevalenceDatabase.new_db()
     for (string, encoding, location), n in db.items():
         if n < min_count:
             continue
-        metadata_by_string[(string, encoding)].append(StringGlobalPrevalence(string, encoding, n, location))
-    gpdb = StringGlobalPrevalenceDatabase(metadata_by_string=metadata_by_string)
+        gpdb.insert(StringGlobalPrevalence(string, encoding, n, location))
 
     print(f"final db contains {len(gpdb):,} strings (more than {MIN_COUNT} occurrences)")
     return gpdb
@@ -103,16 +105,8 @@ def main():
 
     gp = generate_gp_db(args.path, args.min_count, args.type)
 
-    if args.outfile.endswith(".gz"):
-        with gzip.open(args.outfile, "w") as f:
-            for k, v in sorted(gp.metadata_by_string.items(), key=lambda x: x[1][0].global_count, reverse=True):
-                for e in v:
-                    f.write(msgspec.json.encode(e) + b"\n")
-    else:
-        with open(args.outfile, "w", encoding="utf-8") as f:
-            for k, v in sorted(gp.metadata_by_string.items(), key=lambda x: x[1][0].global_count, reverse=True):
-                for e in v:
-                    f.write(msgspec.json.encode(e).decode("utf-8") + "\n")
+    compress = args.outfile.endswith(".gz")
+    gp.to_file(args.outfile, compress=compress)
 
     return 0
 
