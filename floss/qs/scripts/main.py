@@ -91,8 +91,25 @@ def render_string(
     #  | stringstring                              #tag  0000004A |
     #  | string                                    #tag  00000050 |
     #  | stringstringstringstringstringst...  #tag #tag  0000005E |
+    #    ^                                  ^ ^        ^ ^
+    #    |                                  | |        | address
+    #    |                                  | |        padding
+    #    |                                  | tags
+    #    |                                  padding
+    #    string
     #
-    #    length: varies                      2 varies   2     8
+    #    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^
+    #    left column                       right column
+    #
+    # fields are basically laid out from right to left,
+    # which means that the metadata may cause a string to be clipped.
+    #
+    # field sizes:
+    #   address: 8
+    #   padding: 2
+    #   tags: variable, or 0
+    #   padding: 2
+    #   string: variable
 
     PADDING_WIDTH = 2
     ADDRESS_WIDTH = 8
