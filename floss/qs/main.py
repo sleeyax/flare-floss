@@ -13,6 +13,9 @@ from rich.text import Text
 from rich.style import Style
 from rich.console import Console
 
+import floss.qs.db.winapi
+from floss.qs.db.winapi import WindowsApiStringDatabase
+
 MIN_STR_LEN = 6
 
 logger = logging.getLogger(__name__)
@@ -309,21 +312,11 @@ def query_library_string_database(string: str) -> Sequence[Tag]:
     return tags
 
 
-def query_winapi_name_database(string: str) -> Sequence[Tag]:
-    dll_names = {
-        "kernel32.dll",
-        "user32.dll",
-    }
-
-    api_names = {
-        "CreateFileA",
-        "CreateFileW",
-    }
-
-    if string.lower() in dll_names:
+def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Sequence[Tag]:
+    if string.lower() in db.dll_names:
         return ("#winapi",)
 
-    if string in api_names:
+    if string in db.api_names:
         return ("#winapi",)
 
     return ()
@@ -372,6 +365,9 @@ def main():
                 )
             )
 
+    winapi_path = pathlib.Path(floss.qs.db.winapi.__file__).parent / "data" / "winapi"
+    winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(winapi_path)
+
     tagged_strings = list(map(lambda s: TaggedString(s, set()), strings))
 
     for string in tagged_strings:
@@ -379,7 +375,7 @@ def main():
 
         string.tags.update(query_global_prevalence_database(key))
         string.tags.update(query_library_string_database(key))
-        string.tags.update(query_winapi_name_database(key))
+        string.tags.update(query_winapi_name_database(winapi_database, key))
 
     console = Console()
     tag_rules = {
