@@ -1,18 +1,17 @@
-import json
 import re
 import sys
+import json
 import mmap
-import pathlib
 import logging
+import pathlib
 import argparse
 import itertools
+from typing import Set, Dict, Literal, Iterable
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Literal, Iterable, Set
 
 from rich.text import Text
 from rich.style import Style
 from rich.console import Console
-
 
 MIN_STR_LEN = 6
 
@@ -42,9 +41,7 @@ class TaggedString:
     tags: Set[Tag]
 
 
-def extract_ascii_strings(
-    buf: bytes, n: int = MIN_STR_LEN
-) -> Iterable[ExtractedString]:
+def extract_ascii_strings(buf: bytes, n: int = MIN_STR_LEN) -> Iterable[ExtractedString]:
     """Extract ASCII strings from the given binary data."""
 
     if not buf:
@@ -60,9 +57,7 @@ def extract_ascii_strings(
         yield ExtractedString(match.group().decode("ascii"), match.start(), "ascii")
 
 
-def extract_unicode_strings(
-    buf: bytes, n: int = MIN_STR_LEN
-) -> Iterable[ExtractedString]:
+def extract_unicode_strings(buf: bytes, n: int = MIN_STR_LEN) -> Iterable[ExtractedString]:
     """Extract naive UTF-16 strings from the given binary data."""
     if not buf:
         return
@@ -74,9 +69,7 @@ def extract_unicode_strings(
         r = re.compile(reg)
     for match in r.finditer(buf):
         try:
-            yield ExtractedString(
-                match.group().decode("utf-16"), match.start(), "unicode"
-            )
+            yield ExtractedString(match.group().decode("utf-16"), match.start(), "unicode")
         except UnicodeDecodeError:
             pass
 
@@ -84,6 +77,7 @@ def extract_unicode_strings(
 MUTED_STYLE = Style(color="gray50")
 DEFAULT_STYLE = Style()
 HIGHLIGHT_STYLE = Style(color="yellow")
+
 
 def Span(text: str, style: Style = DEFAULT_STYLE) -> Text:
     """convenience function for single-line, styled text region"""
@@ -176,7 +170,7 @@ def render_string(
 
         tags.append_text(Span(tag, style=tag_style))
         if i < len(s.tags) - 1:
-            tags.append_text(" ")
+            tags.append_text(Span(" "))
 
     tags.align("right", TAG_WIDTH)
     line.append_text(tags)
@@ -199,14 +193,10 @@ def render_string(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Extract human readable strings from binary data, quantum-style."
-    )
+    parser = argparse.ArgumentParser(description="Extract human readable strings from binary data, quantum-style.")
     parser.add_argument("path", help="file or path to analyze")
     logging_group = parser.add_argument_group("logging arguments")
-    logging_group.add_argument(
-        "-d", "--debug", action="store_true", help="enable debugging output on STDERR"
-    )
+    logging_group.add_argument("-d", "--debug", action="store_true", help="enable debugging output on STDERR")
     logging_group.add_argument(
         "-q",
         "--quiet",
@@ -240,9 +230,7 @@ def main():
 
             strings = list(
                 sorted(
-                    itertools.chain(
-                        extract_ascii_strings(buf), extract_unicode_strings(buf)
-                    ),
+                    itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)),
                     key=lambda s: s.offset,
                 )
             )
