@@ -1,7 +1,7 @@
 import gzip
 import pathlib
 import datetime
-from typing import List, Literal, Dict, Tuple
+from typing import Dict, List, Literal
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -14,10 +14,10 @@ Location = Literal["header"] | Literal["gap"] | Literal["overlay"] | str
 
 
 class Metadata(msgspec.Struct):
-    type: str | None = "metadata"
-    version: str | None = "1.0"
-    timestamp: str | None = datetime.datetime.now().isoformat()
-    note: str | None = ""  # manual notes to explain the data source(s)
+    note: str | None
+    timestamp: str | None
+    type: str = "global_prevalence"
+    version: str = "1.0"
 
 
 class StringGlobalPrevalence(msgspec.Struct):
@@ -43,11 +43,15 @@ class StringGlobalPrevalenceDatabase:
         return self.metadata_by_string.get(string, [])
 
     def update(self, other: "StringGlobalPrevalenceDatabase"):
+        # TODO combine if existing data
         self.metadata_by_string.update(other.metadata_by_string)
 
     @classmethod
     def new_db(cls, note: str = None):
-        return cls(meta=Metadata(note=note), metadata_by_string=defaultdict(list))
+        return cls(
+            meta=Metadata(timestamp=datetime.datetime.now().isoformat(), note=note),
+            metadata_by_string=defaultdict(list),
+        )
 
     @classmethod
     def from_file(cls, path: pathlib.Path, compress: bool = True) -> "StringGlobalPrevalenceDatabase":
