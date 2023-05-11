@@ -199,19 +199,6 @@ def render_string(
     return line
 
 
-def load_global_prevalence_database():
-    gp_path = pathlib.Path(os.path.join(os.path.dirname(__file__), "db", "data", "gp", "gp.jsonl.gz"))
-    gp_db = StringGlobalPrevalenceDatabase.from_file(gp_path)
-
-    gp_path = pathlib.Path(os.path.join(os.path.dirname(__file__), "db", "data", "gp", "cwindb-native.jsonl.gz"))
-    gp_db.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
-
-    gp_path = pathlib.Path(os.path.join(os.path.dirname(__file__), "db", "data", "gp", "cwindb-dotnet.jsonl.gz"))
-    gp_db.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
-
-    return gp_db
-
-
 def query_global_prevalence_database(global_prevalence_database, string):
     if global_prevalence_database.query(string):
         return ("#common",)
@@ -297,7 +284,13 @@ def main():
 
     tagged_strings = list(map(lambda s: TaggedString(s, set()), strings))
 
-    global_prevalence_database = load_global_prevalence_database()
+    gp_path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "gp.jsonl.gz"
+    global_prevalence_database = StringGlobalPrevalenceDatabase.from_file(gp_path)
+    gp_path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "cwindb-native.jsonl.gz"
+    global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
+    gp_path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "cwindb-dotnet.jsonl.gz"
+    global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
+
     for string in tagged_strings:
         key = string.string.string
 
