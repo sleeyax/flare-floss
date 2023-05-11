@@ -13,7 +13,9 @@ from rich.text import Text
 from rich.style import Style
 from rich.console import Console
 
+import floss.qs.db.oss
 import floss.qs.db.winapi
+from floss.qs.db.oss import OpenSourceStringDatabase
 from floss.qs.db.winapi import WindowsApiStringDatabase
 
 MIN_STR_LEN = 6
@@ -215,101 +217,16 @@ def query_global_prevalence_database(string: str) -> Sequence[Tag]:
         return ()
 
 
-def query_library_string_database(string: str) -> Sequence[Tag]:
-    libraries = {
-        "zlib": {
-            " 1.2.13 Copyright 1995-2022 Jean-loup Gailly and Mark Adler ",
-            " deflate 1.2.13 Copyright 1995-2022 Jean-loup Gailly and Mark Adler ",
-            " inflate 1.2.13 Copyright 1995-2022 Mark Adler ",
-            "%s%s%s",
-            "1.2.13",
-            "<fd:%d>",
-            "compressed data error",
-            "internal error: deflate stream corrupt",
-            "internal error: inflate stream corrupt",
-            "invalid block type",
-            "invalid distance code",
-            "invalid distance too far back",
-            "invalid literal/length code",
-            "need dictionary",
-            "out of memory",
-            "out of room to push characters",
-            "request does not fit in a size_t",
-            "request does not fit in an int",
-            "requested length does not fit in int",
-            "string length does not fit in int",
-            "unexpected end of file",
-        },
-        "bzip2": {
-            "        %d pointers, %d sorted, %d scanned",
-            "        bucket sorting ...",
-            "        depth %6d has ",
-            "        main sort initialise ...",
-            "        qsort [0x%x, 0x%x]   done %d   this %d",
-            "        reconstructing block ...",
-            "      %d in block, %d after MTF & 1-2 coding, %d+2 syms in use",
-            "      %d work, %d block, ratio %5.2f",
-            "      bytes: mapping %d, ",
-            "      initial group %d, [%d .. %d], has %d syms (%4.1f%%)",
-            "      pass %d: size is %d, grp uses are ",
-            "    block %d: crc = 0x%08x, combined CRC = 0x%08x, size = %d",
-            "    final combined CRC = 0x%08x",
-            "    too repetitive; using fallback sorting algorithm",
-            " {0x%08x, 0x%08x}",
-            "%6d unresolved strings",
-            "1.0.8, 13-Jul-2019",
-            "    combined CRCs: stored = 0x%08x, computed = 0x%08x",
-            "bzip2/libbzip2: internal error number %d.",
-            "This is a bug in bzip2/libbzip2, %s.",
-            "Please report it to: bzip2-devel@sourceware.org.  If this happened",
-            "when you were using some program which uses libbzip2 as a",
-            "component, you should also report this bug to the author(s)",
-            "of that program.  Please make an effort to report this bug;",
-            "timely and accurate bug reports eventually lead to higher",
-            "quality software.  Thanks.",
-            "code lengths %d, ",
-            "codes %d",
-            "selectors %d, ",
-        },
-        "sqlite3": {
-            'cannot %s %s "%s"',
-            'cannot INSERT into generated column "%s"',
-            'cannot UPDATE generated column "%s"',
-            "cannot UPSERT a view",
-            "cannot VACUUM - SQL statements in progress",
-            "cannot VACUUM from within a transaction",
-            "cannot add a STORED column",
-            "cannot create %s trigger on view: %S",
-            "cannot create INSTEAD OF trigger on table: %S",
-            'cannot create a TEMP index on non-TEMP table "%s"',
-            "cannot create trigger on system table",
-            "cannot create triggers on virtual tables",
-            "cannot detach database %s",
-            'cannot drop %s column: "%s"',
-            'cannot drop column "%s": no other columns exist',
-            "cannot join using column %s - column not present in both tables",
-            "cannot limit WAL size: %s",
-            "cannot modify %s because it is a view",
-            "cannot open %s column for writing",
-            "cannot open file",
-            "cannot open table without rowid: %s",
-            "cannot open value of type %s",
-            "cannot open view: %s",
-            "cannot open virtual table: %s",
-            "cannot override %s of window: %s",
-            "cannot use DEFAULT on a generated column",
-            "cannot use RETURNING in a trigger",
-            "cannot use window functions in recursive queries",
-        },
-    }
+def query_library_string_databases(dbs: Sequence[OpenSourceStringDatabase], string: str) -> Sequence[Tag]:
+    tags = set()
+    for db in dbs:
+        meta = db.metadata_by_string.get(string)
+        if not meta:
+            continue
 
-    tags = []
+        tags.add(f"#{meta.library_name}")
 
-    for library, strings in libraries.items():
-        if string in strings:
-            tags.append(f"#{library}")
-
-    return tags
+    return tuple(tags)
 
 
 def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Sequence[Tag]:
@@ -368,13 +285,19 @@ def main():
     winapi_path = pathlib.Path(floss.qs.db.winapi.__file__).parent / "data" / "winapi"
     winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(winapi_path)
 
+    library_databases = (
+        OpenSourceStringDatabase.from_file(
+            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "zlib.jsonl.gz"
+        ),
+    )
+
     tagged_strings = list(map(lambda s: TaggedString(s, set()), strings))
 
     for string in tagged_strings:
         key = string.string.string
 
         string.tags.update(query_global_prevalence_database(key))
-        string.tags.update(query_library_string_database(key))
+        string.tags.update(query_library_string_databases(library_databases, key))
         string.tags.update(query_winapi_name_database(winapi_database, key))
 
     console = Console()
