@@ -1,13 +1,13 @@
 import gzip
 import pathlib
 import datetime
-from typing import List, Literal, Mapping
+from typing import List, Literal, Dict, Tuple
 from collections import defaultdict
 from dataclasses import dataclass
 
 import msgspec
 
-Encoding = Literal["ascii"] | Literal["utf-16"] | Literal["unknown"]
+Encoding = Literal["ascii"] | Literal["utf-16le"] | Literal["unknown"]
 # header | gap | overlay
 # or section name
 Location = Literal["header"] | Literal["gap"] | Literal["overlay"] | str
@@ -30,17 +30,20 @@ class StringGlobalPrevalence(msgspec.Struct):
 @dataclass
 class StringGlobalPrevalenceDatabase:
     meta: Metadata
-    metadata_by_string: Mapping[str, List[StringGlobalPrevalence]]
+    metadata_by_string: Dict[str, List[StringGlobalPrevalence]]
 
     def __len__(self) -> int:
         return len(self.metadata_by_string)
 
     def insert(self, str_gp: StringGlobalPrevalence):
-        # TODO combine if existing data?
+        # TODO combine if existing data
         self.metadata_by_string[str_gp.string].append(str_gp)
 
     def query(self, string):
         return self.metadata_by_string.get(string, [])
+
+    def update(self, other: "StringGlobalPrevalenceDatabase"):
+        self.metadata_by_string.update(other.metadata_by_string)
 
     @classmethod
     def new_db(cls, note: str = None):
@@ -48,7 +51,7 @@ class StringGlobalPrevalenceDatabase:
 
     @classmethod
     def from_file(cls, path: pathlib.Path, compress: bool = True) -> "StringGlobalPrevalenceDatabase":
-        metadata_by_string: Mapping[str, List[StringGlobalPrevalence]] = defaultdict(list)
+        metadata_by_string: Dict[str, List[StringGlobalPrevalence]] = defaultdict(list)
 
         if compress:
             lines = gzip.decompress(path.read_bytes()).split(b"\n")

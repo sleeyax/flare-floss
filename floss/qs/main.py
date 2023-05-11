@@ -1,3 +1,4 @@
+import os
 import re
 import sys
 import json
@@ -17,6 +18,7 @@ import floss.qs.db.oss
 import floss.qs.db.winapi
 from floss.qs.db.oss import OpenSourceStringDatabase
 from floss.qs.db.winapi import WindowsApiStringDatabase
+from floss.qs.db.gp import StringGlobalPrevalenceDatabase
 
 MIN_STR_LEN = 6
 
@@ -197,24 +199,24 @@ def render_string(
     return line
 
 
-def query_global_prevalence_database(string: str) -> Sequence[Tag]:
-    global_prevalence = {
-        "!This program cannot be run in DOS mode.",
-        "Rich",
-        "This program must be run under Win32",
-        "This program cannot be run in Win32 mode.",
-        "kernel32.dll",
-        "USER32.dll",
-        "ADVAPI32.dll",
-        "January",
-        "February",
-    }
+def load_global_prevalence_database():
+    gp_path = pathlib.Path(os.path.join(os.path.dirname(__file__), "db", "data", "gp", "gp.jsonl.gz"))
+    gp_db = StringGlobalPrevalenceDatabase.from_file(gp_path)
 
-    if string in global_prevalence:
+    gp_path = pathlib.Path(os.path.join(os.path.dirname(__file__), "db", "data", "gp", "cwindb-native.jsonl.gz"))
+    gp_db.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
+
+    gp_path = pathlib.Path(os.path.join(os.path.dirname(__file__), "db", "data", "gp", "cwindb-dotnet.jsonl.gz"))
+    gp_db.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
+
+    return gp_db
+
+
+def query_global_prevalence_database(global_prevalence_database, string):
+    if global_prevalence_database.query(string):
         return ("#common",)
 
-    else:
-        return ()
+    return ()
 
 
 def query_library_string_databases(dbs: Sequence[OpenSourceStringDatabase], string: str) -> Sequence[Tag]:
@@ -295,10 +297,11 @@ def main():
 
     tagged_strings = list(map(lambda s: TaggedString(s, set()), strings))
 
+    global_prevalence_database = load_global_prevalence_database()
     for string in tagged_strings:
         key = string.string.string
 
-        string.tags.update(query_global_prevalence_database(key))
+        string.tags.update(query_global_prevalence_database(global_prevalence_database, key))
         string.tags.update(query_library_string_databases(library_databases, key))
         string.tags.update(query_winapi_name_database(winapi_database, key))
 
