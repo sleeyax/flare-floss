@@ -21,7 +21,7 @@ from floss.qs.db.gp import Encoding, Location
 
 MIN_LEN = 6
 MAX_LEN_PES = 100
-MAX_LEN_LIBS = 64  # TODO check, but these tend to contain long strings
+MAX_LEN_LIBS = 64  # TODO check, but these tend to contain long strings, focus on actual string data via better parsing
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class FileString:
 class PeStrings:
     path: str
     sha256: str
-    timestamp: datetime.datetime
+    timestamp: str
     dotnet: bool
     strings: List[FileString]
 
@@ -61,28 +61,25 @@ def find_file_paths(path: str, suffixes: Tuple[str, ...] = None, prefixes: Tuple
     elif os.path.isdir(path):
         logger.debug("searching directory %s", os.path.abspath(os.path.normpath(path)))
         for root, dirs, files in os.walk(path):
+            if root.startswith((r"C:\Windows\WinSxS",)):  # can be large, stores install/backup related files
+                logger.debug("skip %s", root)
+                continue
+
             for file in files:
                 if match(file, suffixes, prefixes):
                     file_path = os.path.join(root, file)
-
-                    if file_path.startswith(
-                        (r"C:\Windows\WinSxS",)  # can be large, stores install/backup related files
-                    ):
-                        logger.info("skip %s", file_path)
-                        continue
-
                     logger.debug("found file: %s", os.path.abspath(os.path.normpath(file_path)))
                     yield file_path
 
 
 # TODO adjust to new JSON format
-def extract_libs(dir_path: str, outdir: str):
+def extract_libs(dir_path: str, outdir: str, min_len: int, max_len: int):
     for file_path in find_file_paths(dir_path, suffixes=(".lib",)):
         with open(file_path, "rb") as f:
             binary_data = f.read()
 
-        extracted_strings = floss.strings.extract_ascii_unicode_strings(binary_data, MIN_LEN)
-        filtered_strings = filter(lambda s: len(s.string) <= MAX_LEN_LIBS, extracted_strings)
+        extracted_strings = floss.strings.extract_ascii_unicode_strings(binary_data, min_len)
+        filtered_strings = filter(lambda s: len(s.string) <= max_len, extracted_strings)
         sorted_strings = sorted(filtered_strings, key=lambda s: (s.string, len(s.string)))
 
         outfile = os.path.join(outdir, f"{file_path.replace(os.sep, '--')}.json")
@@ -103,7 +100,9 @@ def get_section(offset: int, sections: List):
         raise ValueError(f"{offset} not in sections:\n {sections}")
 
 
-def extract_pes(dir_path, outdir):
+def extract_pes(dir_path, outdir, min_len: int, max_len: int):
+    seen_hashes = set()
+
     for file_path in find_file_paths(dir_path, suffixes=(".exe", ".dll", ".sys", ".exe_", ".dll_", ".sys_")):
         outfile = os.path.join(outdir, f"{os.path.basename(file_path)}.json")
         if os.path.exists(outfile):
@@ -136,18 +135,25 @@ def extract_pes(dir_path, outdir):
         dnpe = dnfile.dnPE(data=binary_data)
         sections = get_section_boundaries(pe, len(binary_data))
 
-        extracted_strings = floss.strings.extract_ascii_unicode_strings(binary_data, MIN_LEN)
-        filtered_strings = filter(lambda es: len(es.string) <= MAX_LEN_PES, extracted_strings)
+        extracted_strings = floss.strings.extract_ascii_unicode_strings(binary_data, min_len)
+        filtered_strings = filter(lambda es: len(es.string) <= max_len, extracted_strings)
 
         if os.path.exists(outfile):
             raise Exception(f"{outfile} already exists")
 
         sha256 = hashlib.sha256()
         sha256.update(binary_data)
+        sha256_hash = sha256.hexdigest()
+
+        if sha256_hash in seen_hashes:
+            logger.info("skipping file with sha256 hash %s: already analyzed", sha256_hash)
+            continue
+        else:
+            seen_hashes.add(sha256_hash)
 
         pestrings = PeStrings(
             path=os.path.abspath(os.path.normpath(file_path)),
-            sha256=sha256.hexdigest(),
+            sha256=sha256_hash,
             timestamp=datetime.datetime.now().isoformat(),
             dotnet=bool(dnpe.net),
             strings=[
@@ -199,6 +205,8 @@ def main():
         action="store_true",
         help="recursively search and extract string from PE files under path, e.g., C:\Windows",
     )
+    parser.add_argument("--min-len", type=int, default=MIN_LEN, help="minimum string length")
+    parser.add_argument("--max-len", type=int, default=-1, help="maximum string length")
 
     logging_group = parser.add_argument_group("logging arguments")
     logging_group.add_argument("-d", "--debug", action="store_true", help="enable debugging output on STDERR")
@@ -228,10 +236,19 @@ def main():
     else:
         os.mkdir(args.outdir)
 
+    max_len = args.max_len
+    if max_len == -1:
+        if args.libs:
+            max_len = MAX_LEN_PES
+        elif args.libs:
+            max_len = MAX_LEN_LIBS
+        else:
+            raise ValueError("unknown extraction type")
+
     if args.libs:
-        extract_libs(args.path, args.outdir)
+        extract_libs(args.path, args.outdir, args.min_len, max_len)
     elif args.pes:
-        extract_pes(args.path, args.outdir)
+        extract_pes(args.path, args.outdir, args.min_len, max_len)
 
     return 0
 
