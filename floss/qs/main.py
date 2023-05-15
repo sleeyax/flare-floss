@@ -48,6 +48,24 @@ UNICODE_RE_6 = re.compile(b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, 6))
 
 
 @dataclass
+class Range:
+    offset: int
+    length: int
+
+    @property
+    def end(self) -> int:
+        return self.offset + self.length
+
+    def __contains__(self, other: Union[int, "Range"]) -> bool:
+        if isinstance(other, int):
+            return self.offset <= other < self.end
+        elif isinstance(other, Range):
+            return (other.offset in self) and (other.end in self)
+        else:
+            raise TypeError(f"unsupported type: {type(other)}")
+
+
+@dataclass
 class ExtractedString:
     string: str
     offset: int
@@ -247,16 +265,31 @@ def check_is_code(vw, function_index: viv_utils.InstructionFunctionIndex, string
     return ()
 
 
-def check_is_reloc(vw, string):
-    IMAGE_DIRECTORY_ENTRY_BASERELOC = 5
-    edir = vw.parsedbin.getDataDirectory(IMAGE_DIRECTORY_ENTRY_BASERELOC)
-    rva = edir.VirtualAddress
-    rsize = edir.Size
+def get_reloc_range(pe: pefile.PE) -> Optional[Range]:
+    directory_index = pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_BASERELOC"]
 
-    if rva <= vw.parsedbin.offsetToRva(string.offset) < rva + rsize:
+    if pe.OPTIONAL_HEADER is None or pe.OPTIONAL_HEADER.DATA_DIRECTORY is None:
+        return None
+
+    try:
+        dir_entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[directory_index]
+    except IndexError:
+        return None
+
+    rva = dir_entry.VirtualAddress
+    rsize = dir_entry.Size
+
+    return Range(pe.get_offset_from_rva(rva), rsize)
+
+
+def check_is_reloc(reloc: Optional[Range], string: ExtractedString):
+    if not reloc:
+        return ()
+
+    if string.offset in reloc:
         return ("#reloc",)
-
-    return ()
+    else:
+        return ()
 
 
 def query_global_prevalence_database(global_prevalence_database, string):
@@ -286,24 +319,6 @@ def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Seq
         return ("#winapi",)
 
     return ()
-
-
-@dataclass
-class Range:
-    offset: int
-    length: int
-
-    @property
-    def end(self) -> int:
-        return self.offset + self.length
-
-    def __contains__(self, other: Union[int, "Range"]) -> bool:
-        if isinstance(other, int):
-            return self.offset <= other < self.end
-        elif isinstance(other, Range):
-            return (other.offset in self) and (other.end in self)
-        else:
-            raise TypeError(f"unsupported type: {type(other)}")
 
 
 @dataclass
@@ -450,6 +465,26 @@ def main():
             with timing("lancelot: load workspace"):
                 ws = lancelot.from_bytes(bytes(buf))
 
+            # contains the file offsets of bytes that are part of recognized instructions.
+            code_offsets = set()
+            with timing("lancelot: find code"):
+                if pe is not None and pe.OPTIONAL_HEADER is not None:
+                    base_address = pe.OPTIONAL_HEADER.ImageBase
+                    for function in ws.get_functions():
+                        cfg = ws.build_cfg(function)
+                        for bb in cfg.basic_blocks.values():
+                            # VA -> RVA -> file offset
+                            offset = pe.get_offset_from_rva(bb.address - base_address)
+                            for addr in range(offset, offset + bb.length):
+                                code_offsets.add(addr)
+
+            reloc_range = get_reloc_range(pe) if pe else None
+            print(reloc_range)
+
+            # pe is not valid outside of this block
+            # because the underlying mmap is closed.
+            del pe
+
     should_save_workspace = os.environ.get("FLOSS_SAVE_WORKSPACE") not in ("0", "no", "NO", "n", None)
     with halo.Halo(
         text="analyzing program ('slow' for now using vivisect)",
@@ -478,19 +513,6 @@ def main():
     gp_path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "cwindb-dotnet.jsonl.gz"
     global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
 
-    # contains the file offsets of bytes that are part of recognized instructions.
-    code_offsets = set()
-    with timing("lancelot: find code"):
-        if pe is not None and pe.OPTIONAL_HEADER is not None:
-            base_address = pe.OPTIONAL_HEADER.ImageBase
-            for function in ws.get_functions():
-                cfg = ws.build_cfg(function)
-                for bb in cfg.basic_blocks.values():
-                    # VA -> RVA -> file offset
-                    offset = pe.get_offset_from_rva(bb.address - base_address)
-                    for addr in range(offset, offset + bb.length):
-                        code_offsets.add(addr)
-
     def check_is_code2(code_offsets, string: ExtractedString):
         string_length = len(string.string)
         if string.encoding == "utf-16":
@@ -511,7 +533,7 @@ def main():
 
         string.tags.update(check_is_code(vw, function_index, string.string))
         string.tags.update(check_is_code2(code_offsets, string.string))
-        string.tags.update(check_is_reloc(vw, string.string))
+        string.tags.update(check_is_reloc(reloc_range, string.string))
 
         string.tags.update(query_global_prevalence_database(global_prevalence_database, key))
         string.tags.update(query_library_string_databases(library_databases, key))
@@ -536,6 +558,7 @@ def main():
     console = Console()
     tag_rules: Dict[str, Literal["mute"] | Literal["highlight"] | Literal["default"] | Literal["hide"]] = {
         # "#code": "hide",
+        "#reloc": "hide",
         "#common": "mute",
         "#zlib": "mute",
         "#bzip2": "mute",
