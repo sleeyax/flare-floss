@@ -306,8 +306,14 @@ def main():
     with path.open("rb") as f:
         WHOLE_FILE = 0
 
-        # TODO: needs to be tested on Windows, macOS
-        with mmap.mmap(f.fileno(), length=WHOLE_FILE, access=mmap.ACCESS_READ) as mm:
+        if hasattr(mmap, "MAP_PRIVATE"):
+            # unix
+            kwargs = {"flags": mmap.MAP_PRIVATE, "prot": mmap.PROT_READ}
+        else:
+            # windows
+            kwargs = {"access": mmap.ACCESS_READ}
+
+        with mmap.mmap(f.fileno(), length=WHOLE_FILE, **kwargs) as mm:
             # treat the mmap as a readable bytearray
             buf: bytearray = mm  # type: ignore
 
