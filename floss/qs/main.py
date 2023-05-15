@@ -229,7 +229,7 @@ def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Seq
 
 
 @dataclass
-class Region:
+class Segment:
     offset: int
     length: int
     type: Literal["segment"] | Literal["section"]
@@ -240,16 +240,16 @@ class Region:
         return self.offset + self.length
 
 
-def compute_file_regions(pe: pefile.PE) -> Sequence[Region]:
+def compute_file_segments(pe: pefile.PE) -> Sequence[Segment]:
     regions = []
 
     for section in sorted(pe.sections, key=lambda s: s.PointerToRawData):
         if section.SizeOfRawData == 0:
             continue
-        regions.append(Region(section.get_PointerToRawData_adj(), section.SizeOfRawData, "section", section))
+        regions.append(Segment(section.get_PointerToRawData_adj(), section.SizeOfRawData, "section", section))
 
     # segment that contains all data until the first section
-    regions.insert(0, Region(0, regions[0].offset, "segment"))
+    regions.insert(0, Segment(0, regions[0].offset, "segment"))
 
     # segment that contains all data after the last section
     # aka. "overlay"
@@ -257,7 +257,7 @@ def compute_file_regions(pe: pefile.PE) -> Sequence[Region]:
     if pe.__data__ is not None:
         buf = pe.__data__
         if last_section.end < len(buf):
-            regions.append(Region(last_section.end, len(buf) - last_section.end, "segment"))
+            regions.append(Segment(last_section.end, len(buf) - last_section.end, "segment"))
 
     # add segments for any gaps between sections.
     # note that we append new items to the end of the list and then resort,
@@ -267,7 +267,7 @@ def compute_file_regions(pe: pefile.PE) -> Sequence[Region]:
         region = regions[i]
 
         if prior.end != region.offset:
-            regions.append(Region(prior.end, region.offset - prior.end, "segment"))
+            regions.append(Segment(prior.end, region.offset - prior.end, "segment"))
     regions.sort(key=lambda s: s.offset)
 
     return regions
@@ -325,13 +325,13 @@ def main():
             )
 
             pe: Optional[pefile.PE] = None
-            regions: Sequence[Region] = []
+            segments: Sequence[Segment] = []
             try:
                 pe = pefile.PE(data=buf)
             except Exception as e:
                 logger.warning("failed to parse as PE: %s", e, exc_info=True)
             else:
-                regions = compute_file_regions(pe)
+                segments = compute_file_segments(pe)
 
     winapi_path = pathlib.Path(floss.qs.db.winapi.__file__).parent / "data" / "winapi"
     winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(winapi_path)
@@ -367,36 +367,36 @@ def main():
         "#winapi": "mute",
     }
 
-    if regions:
-        for i, region in enumerate(regions):
-            strings_in_region = list(filter(lambda s: region.offset <= s.string.offset < region.end, tagged_strings))
+    if segments:
+        for i, segment in enumerate(segments):
+            strings_in_segment = list(filter(lambda s: segment.offset <= s.string.offset < segment.end, tagged_strings))
 
-            if len(strings_in_region) == 0:
+            if len(strings_in_segment) == 0:
                 continue
 
-            if region.type == "section":
+            if segment.type == "section":
                 try:
-                    assert region.section is not None
-                    assert isinstance(region.section, pefile.SectionStructure)
-                    key = region.section.Name.partition(b"\x00")[0].decode("utf-8")
+                    assert segment.section is not None
+                    assert isinstance(segment.section, pefile.SectionStructure)
+                    key = segment.section.Name.partition(b"\x00")[0].decode("utf-8")
                 except UnicodeDecodeError:
                     key = "(invalid)"
-            elif region.type == "segment":
+            elif segment.type == "segment":
                 if i == 0:
                     key = "header"
-                elif i == len(regions) - 1:
+                elif i == len(segments) - 1:
                     key = "overlay"
                 else:
                     key = f"gap ({i - 1})"
             else:
-                raise NotImplementedError(region.type)
+                raise NotImplementedError(segment.type)
 
             header = Span(key, style=MUTED_STYLE)
             header.pad(1)
             header.align("center", width=console.width, character="━")
             console.print(header)
 
-            for string in strings_in_region:
+            for string in strings_in_segment:
                 console.print(render_string(console.width, string, tag_rules))
 
     else:
