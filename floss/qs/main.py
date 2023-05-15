@@ -6,7 +6,7 @@ import logging
 import pathlib
 import argparse
 import itertools
-from typing import Set, Dict, Literal, Iterable, Optional, Sequence
+from typing import Set, Dict, Literal, Iterable, Optional, Sequence, Union
 from dataclasses import dataclass
 
 import pefile
@@ -229,15 +229,28 @@ def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Seq
 
 
 @dataclass
-class Segment:
+class Range:
     offset: int
     length: int
-    type: Literal["segment"] | Literal["section"]
-    section: Optional[pefile.SectionStructure] = None
 
     @property
     def end(self) -> int:
         return self.offset + self.length
+
+    def __contains__(self, other: Union[int, "Range"]) -> bool:
+        if isinstance(other, int):
+            return self.offset <= other < self.end
+        elif isinstance(other, Range):
+            return (other.offset in self) and (other.end in self)
+        else:
+            raise TypeError(f"unsupported type: {type(other)}")
+
+
+@dataclass
+class Segment:
+    range: Range
+    type: Literal["segment"] | Literal["section"]
+    section: Optional[pefile.SectionStructure] = None
 
 
 def compute_file_segments(pe: pefile.PE) -> Sequence[Segment]:
@@ -246,29 +259,29 @@ def compute_file_segments(pe: pefile.PE) -> Sequence[Segment]:
     for section in sorted(pe.sections, key=lambda s: s.PointerToRawData):
         if section.SizeOfRawData == 0:
             continue
-        regions.append(Segment(section.get_PointerToRawData_adj(), section.SizeOfRawData, "section", section))
+        regions.append(Segment(Range(section.get_PointerToRawData_adj(), section.SizeOfRawData), "section", section))
 
     # segment that contains all data until the first section
-    regions.insert(0, Segment(0, regions[0].offset, "segment"))
+    regions.insert(0, Segment(Range(0, regions[0].range.offset), "segment"))
 
     # segment that contains all data after the last section
     # aka. "overlay"
-    last_section = regions[-1]
+    last_section: Segment = regions[-1]
     if pe.__data__ is not None:
         buf = pe.__data__
-        if last_section.end < len(buf):
-            regions.append(Segment(last_section.end, len(buf) - last_section.end, "segment"))
+        if last_section.range.end < len(buf):
+            regions.append(Segment(Range(last_section.range.end, len(buf) - last_section.range.end), "segment"))
 
     # add segments for any gaps between sections.
     # note that we append new items to the end of the list and then resort,
     # to avoid mutating the list while we're iterating over it.
     for i in range(1, len(regions)):
-        prior = regions[i - 1]
-        region = regions[i]
+        prior: Segment = regions[i - 1]
+        region: Segment = regions[i]
 
-        if prior.end != region.offset:
-            regions.append(Segment(prior.end, region.offset - prior.end, "segment"))
-    regions.sort(key=lambda s: s.offset)
+        if prior.range.end != region.range.offset:
+            regions.append(Segment(Range(prior.range.end, region.range.offset - prior.range.end), "segment"))
+    regions.sort(key=lambda s: s.range.offset)
 
     return regions
 
@@ -369,7 +382,7 @@ def main():
 
     if segments:
         for i, segment in enumerate(segments):
-            strings_in_segment = list(filter(lambda s: segment.offset <= s.string.offset < segment.end, tagged_strings))
+            strings_in_segment = list(filter(lambda s: s.string.offset in segment.range, tagged_strings))
 
             if len(strings_in_segment) == 0:
                 continue
