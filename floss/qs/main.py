@@ -179,7 +179,7 @@ def render_string(
     line.append_text(Span(" " * PADDING_WIDTH))
 
     tags = Text()
-    for i, tag in enumerate(s.tags):
+    for i, tag in enumerate(sorted(s.tags)):
         tag_style = DEFAULT_STYLE
         rule = tag_rules.get(tag, "mute")
         if rule == "highlight":
