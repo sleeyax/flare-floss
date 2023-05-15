@@ -7,9 +7,10 @@ import logging
 import pathlib
 import argparse
 import itertools
-from typing import Set, Dict, Literal, Iterable, Sequence
+from typing import Optional, Set, Dict, Literal, Iterable, Sequence
 from dataclasses import dataclass
 
+import pefile
 from rich.text import Text
 from rich.style import Style
 from rich.console import Console
@@ -102,7 +103,7 @@ def render_string(
     #  | string                                    #tag  00000050 |
     #  | stringstringstringstringstringst...  #tag #tag  0000005E |
     #    ^                                  ^ ^        ^ ^
-    #    |                                  | |        | address
+    #    |                                  | |        | offset
     #    |                                  | |        padding
     #    |                                  | tags
     #    |                                  padding
@@ -115,17 +116,17 @@ def render_string(
     # which means that the metadata may cause a string to be clipped.
     #
     # field sizes:
-    #   address: 8
+    #   offset: 8
     #   padding: 2
     #   tags: variable, or 0
     #   padding: 2
     #   string: variable
 
     PADDING_WIDTH = 2
-    ADDRESS_WIDTH = 8
+    OFFSET_WIDTH = 8
     # length of each tag + 1 space between tags
     TAG_WIDTH = (sum(map(len, s.tags)) + len(s.tags) - 1) if s.tags else 0
-    RIGHT_WIDTH = ADDRESS_WIDTH + PADDING_WIDTH + TAG_WIDTH + PADDING_WIDTH
+    RIGHT_WIDTH = OFFSET_WIDTH + PADDING_WIDTH + TAG_WIDTH + PADDING_WIDTH
     LEFT_WIDTH = width - RIGHT_WIDTH
 
     line = Text()
@@ -155,7 +156,7 @@ def render_string(
     rendered_string = json.dumps(s.string.string)[1:-1]
     string = Span(rendered_string, style=string_style)
     # this alignment clips the string if it's too long,
-    # leaving an ellipsis at the end when it would collide with a tag/address.
+    # leaving an ellipsis at the end when it would collide with a tag/offset.
     # this is bad for showing all data verbatim,
     # but is good for the common case of triage analysis.
     string.align("left", LEFT_WIDTH)
@@ -185,16 +186,16 @@ def render_string(
     line.append_text(Span(" " * PADDING_WIDTH))
 
     if True:
-        # render the 000 prefix of the 8-digit address in muted gray
+        # render the 000 prefix of the 8-digit offset in muted gray
         # and the non-zero suffix as blue.
-        addr_chars = f"{s.string.offset:08x}"
-        unpadded = addr_chars.lstrip("0")
-        padding_width = len(addr_chars) - len(unpadded)
+        offset_chars = f"{s.string.offset:08x}"
+        unpadded = offset_chars.lstrip("0")
+        padding_width = len(offset_chars) - len(unpadded)
 
-        addr = Span("")
-        addr.append_text(Span("0" * padding_width, style=MUTED_STYLE))
-        addr.append_text(Span(unpadded, style=Style(color="blue")))
-        line.append_text(addr)
+        offset = Span("")
+        offset.append_text(Span("0" * padding_width, style=MUTED_STYLE))
+        offset.append_text(Span(unpadded, style=Style(color="blue")))
+        line.append_text(offset)
 
     return line
 
