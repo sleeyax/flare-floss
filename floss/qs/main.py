@@ -6,10 +6,11 @@ import logging
 import pathlib
 import argparse
 import itertools
-from typing import Set, Dict, Literal, Iterable, Optional, Sequence, Union
+from typing import Set, Dict, Union, Literal, Iterable, Optional, Sequence
 from dataclasses import dataclass
 
 import pefile
+import intervaltree
 from rich.text import Text
 from rich.style import Style
 from rich.console import Console
@@ -46,6 +47,7 @@ Tag = str
 class TaggedString:
     string: ExtractedString
     tags: Set[Tag]
+    structure: str = ""
 
 
 def extract_ascii_strings(buf: bytes, n: int = MIN_STR_LEN) -> Iterable[ExtractedString]:
@@ -94,7 +96,7 @@ def Span(text: str, style: Style = DEFAULT_STYLE) -> Text:
 def render_string(
     width: int,
     s: TaggedString,
-    tag_rules: Dict[Tag, Literal["mute"] | Literal["highlight"]],
+    tag_rules: Dict[Tag, Literal["mute"] | Literal["highlight"] | Literal["default"]],
 ) -> Text:
     #
     #  | stringstringstring              #tag #tag #tag  00000001 |
@@ -115,6 +117,8 @@ def render_string(
     # which means that the metadata may cause a string to be clipped.
     #
     # field sizes:
+    #   structure: 8
+    #   padding: 2
     #   offset: 8
     #   padding: 2
     #   tags: variable, or 0
@@ -123,9 +127,10 @@ def render_string(
 
     PADDING_WIDTH = 2
     OFFSET_WIDTH = 8
+    STRUCTURE_WIDTH = 16
     # length of each tag + 1 space between tags
     TAG_WIDTH = (sum(map(len, s.tags)) + len(s.tags) - 1) if s.tags else 0
-    RIGHT_WIDTH = OFFSET_WIDTH + PADDING_WIDTH + TAG_WIDTH + PADDING_WIDTH
+    RIGHT_WIDTH = STRUCTURE_WIDTH + PADDING_WIDTH + OFFSET_WIDTH + PADDING_WIDTH + TAG_WIDTH + PADDING_WIDTH
     LEFT_WIDTH = width - RIGHT_WIDTH
 
     line = Text()
@@ -146,6 +151,9 @@ def render_string(
             # default -> mute
             # mute -> mute
             string_style = MUTED_STYLE
+        elif rule == "default":
+            # no action
+            pass
         else:
             raise ValueError(f"unknown tag rule: {rule}")
 
@@ -172,6 +180,8 @@ def render_string(
             tag_style = HIGHLIGHT_STYLE
         elif rule == "mute":
             tag_style = MUTED_STYLE
+        elif rule == "default":
+            tag_style = DEFAULT_STYLE
         else:
             raise ValueError(f"unknown tag rule: {rule}")
 
@@ -195,6 +205,14 @@ def render_string(
         offset.append_text(Span("0" * padding_width, style=MUTED_STYLE))
         offset.append_text(Span(unpadded, style=Style(color="blue")))
         line.append_text(offset)
+
+    if s.structure:
+        structure = Span("/" + s.structure, style=MUTED_STYLE)
+        structure.align("left", STRUCTURE_WIDTH)
+        line.append(structure)
+    else:
+        line.append_text(Span(" " * PADDING_WIDTH))
+        line.append_text(Span(" " * STRUCTURE_WIDTH))
 
     return line
 
@@ -286,6 +304,40 @@ def compute_file_segments(pe: pefile.PE) -> Sequence[Segment]:
     return regions
 
 
+@dataclass
+class Structure:
+    range: Range
+    name: str
+
+
+def compute_file_structures(pe: pefile.PE) -> Sequence[Structure]:
+    structures = []
+
+    for section in sorted(pe.sections, key=lambda s: s.PointerToRawData):
+        structures.append(Structure(Range(section.get_file_offset(), section.sizeof()), "section header"))
+
+    if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
+        for dll in pe.DIRECTORY_ENTRY_IMPORT:
+            try:
+                dll_name = dll.dll.decode("ascii")
+            except UnicodeDecodeError:
+                continue
+            structures.append(Structure(Range(pe.get_offset_from_rva(dll.struct.Name), len(dll_name)), "import table"))
+
+            for entry in dll.imports:
+                if entry.name is None:
+                    continue
+
+                try:
+                    symbol_name = entry.name.decode("ascii")
+                except UnicodeDecodeError:
+                    continue
+
+                structures.append(Structure(Range(entry.name_offset, len(symbol_name)), "import table"))
+
+    return structures
+
+
 def main():
     # set environment variable NO_COLOR=1 to disable color output.
     # set environment variable FORCE_COLOR=1 to force color output, such as when piping to a pager.
@@ -339,12 +391,14 @@ def main():
 
             pe: Optional[pefile.PE] = None
             segments: Sequence[Segment] = []
+            structures: Sequence[Structure] = []
             try:
                 pe = pefile.PE(data=buf)
             except Exception as e:
                 logger.warning("failed to parse as PE: %s", e, exc_info=True)
             else:
                 segments = compute_file_segments(pe)
+                structures = compute_file_structures(pe)
 
     winapi_path = pathlib.Path(floss.qs.db.winapi.__file__).parent / "data" / "winapi"
     winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(winapi_path)
@@ -364,6 +418,10 @@ def main():
     gp_path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "cwindb-dotnet.jsonl.gz"
     global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
 
+    structures_by_range = intervaltree.IntervalTree()
+    for interval in structures:
+        structures_by_range.addi(interval.range.offset, interval.range.end, interval)
+
     for string in tagged_strings:
         key = string.string.string
 
@@ -371,13 +429,30 @@ def main():
         string.tags.update(query_library_string_databases(library_databases, key))
         string.tags.update(query_winapi_name_database(winapi_database, key))
 
+        string_length = len(string.string.string)
+        if string.string.encoding == "utf-16":
+            string_length *= 2
+
+        start, end = string.string.offset, string.string.offset + string_length
+        overlapping_structures = list(sorted(structures_by_range.overlap(start, end), key=lambda i: i.begin))
+        for interval in overlapping_structures:
+            # interval: intervaltree.Interval
+            #
+            # need intervaltree type annotations
+            # Interval has the property .data, which is of type Structure,
+            # due to how we initialized the map.
+            structure: Structure = interval.data  # type: ignore
+            string.structure = structure.name
+            break
+
     console = Console()
-    tag_rules: Dict[str, Literal["mute"] | Literal["highlight"]] = {
+    tag_rules: Dict[str, Literal["mute"] | Literal["highlight"] | Literal["default"]] = {
         "#common": "mute",
         "#zlib": "mute",
         "#bzip2": "mute",
         "#sqlite3": "mute",
         "#winapi": "mute",
+        "#structure": "default",
     }
 
     if segments:
