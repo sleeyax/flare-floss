@@ -3,17 +3,19 @@ import re
 import sys
 import json
 import mmap
+import time
 import logging
 import pathlib
 import argparse
 import itertools
+import contextlib
 from typing import Set, Dict, Union, Literal, Iterable, Optional, Sequence
 from dataclasses import dataclass
 
 import pefile
+import lancelot
 import viv_utils
 import intervaltree
-
 from halo import halo
 from rich.text import Text
 from rich.style import Style
@@ -28,6 +30,14 @@ from floss.qs.db.winapi import WindowsApiStringDatabase
 MIN_STR_LEN = 6
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def timing(msg: str):
+    t0 = time.time()
+    yield
+    t1 = time.time()
+    logger.debug("perf: %s: %0.2fs", msg, t1 - t0)
 
 
 ASCII_BYTE = r" !\"#\$%&\'\(\)\*\+,-\./0123456789:;<=>\?@ABCDEFGHIJKLMNOPQRSTUVWXYZ\[\]\^_`abcdefghijklmnopqrstuvwxyz\{\|\}\\\~\t".encode(
@@ -435,6 +445,11 @@ def main():
                 segments = compute_file_segments(pe)
                 structures = compute_file_structures(pe)
 
+            # lancelot only accepts bytes, not mmap
+            # TODO: fix but during load of pma05-01
+            with timing("lancelot: load workspace"):
+                ws = lancelot.from_bytes(bytes(buf))
+
     should_save_workspace = os.environ.get("FLOSS_SAVE_WORKSPACE") not in ("0", "no", "NO", "n", None)
     with halo.Halo(
         text="analyzing program ('slow' for now using vivisect)",
@@ -463,6 +478,30 @@ def main():
     gp_path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "cwindb-dotnet.jsonl.gz"
     global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
 
+    # contains the file offsets of bytes that are part of recognized instructions.
+    code_offsets = set()
+    with timing("lancelot: find code"):
+        if pe is not None and pe.OPTIONAL_HEADER is not None:
+            base_address = pe.OPTIONAL_HEADER.ImageBase
+            for function in ws.get_functions():
+                cfg = ws.build_cfg(function)
+                for bb in cfg.basic_blocks.values():
+                    # VA -> RVA -> file offset
+                    offset = pe.get_offset_from_rva(bb.address - base_address)
+                    for addr in range(offset, offset + bb.length):
+                        code_offsets.add(addr)
+
+    def check_is_code2(code_offsets, string: ExtractedString):
+        string_length = len(string.string)
+        if string.encoding == "utf-16":
+            string_length *= 2
+
+        for addr in range(string.offset, string.offset + string_length):
+            if addr in code_offsets:
+                return ("#code2",)
+
+        return ()
+
     structures_by_range = intervaltree.IntervalTree()
     for interval in structures:
         structures_by_range.addi(interval.range.offset, interval.range.end, interval)
@@ -471,6 +510,7 @@ def main():
         key = string.string.string
 
         string.tags.update(check_is_code(vw, function_index, string.string))
+        string.tags.update(check_is_code2(code_offsets, string.string))
         string.tags.update(check_is_reloc(vw, string.string))
 
         string.tags.update(query_global_prevalence_database(global_prevalence_database, key))
@@ -495,7 +535,7 @@ def main():
 
     console = Console()
     tag_rules: Dict[str, Literal["mute"] | Literal["highlight"] | Literal["default"] | Literal["hide"]] = {
-        "#code": "hide",
+        # "#code": "hide",
         "#common": "mute",
         "#zlib": "mute",
         "#bzip2": "mute",
