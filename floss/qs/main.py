@@ -452,7 +452,6 @@ def main():
         "#bzip2": "mute",
         "#sqlite3": "mute",
         "#winapi": "mute",
-        "#structure": "default",
     }
 
     if segments:
