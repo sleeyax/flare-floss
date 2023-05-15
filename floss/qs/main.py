@@ -68,7 +68,7 @@ class Range:
 @dataclass
 class ExtractedString:
     string: str
-    offset: int
+    range: Range
     encoding: Literal["ascii", "unicode"]
 
 
@@ -95,7 +95,9 @@ def extract_ascii_strings(buf: bytes, n: int = MIN_STR_LEN) -> Iterable[Extracte
         reg = b"([%s]{%d,})" % (ASCII_BYTE, n)
         r = re.compile(reg)
     for match in r.finditer(buf):
-        yield ExtractedString(match.group().decode("ascii"), match.start(), "ascii")
+        offset = match.start()
+        length = match.end() - match.start()
+        yield ExtractedString(match.group().decode("ascii"), Range(offset, length), "ascii")
 
 
 def extract_unicode_strings(buf: bytes, n: int = MIN_STR_LEN) -> Iterable[ExtractedString]:
@@ -109,8 +111,10 @@ def extract_unicode_strings(buf: bytes, n: int = MIN_STR_LEN) -> Iterable[Extrac
         reg = b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, n)
         r = re.compile(reg)
     for match in r.finditer(buf):
+        offset = match.start()
+        length = match.end() - match.start()
         try:
-            yield ExtractedString(match.group().decode("utf-16"), match.start(), "unicode")
+            yield ExtractedString(match.group().decode("utf-16"), Range(offset, length), "unicode")
         except UnicodeDecodeError:
             pass
 
@@ -231,7 +235,7 @@ def render_string(
     if True:
         # render the 000 prefix of the 8-digit offset in muted gray
         # and the non-zero suffix as blue.
-        offset_chars = f"{s.string.offset:08x}"
+        offset_chars = f"{s.string.range.offset:08x}"
         unpadded = offset_chars.lstrip("0")
         padding_width = len(offset_chars) - len(unpadded)
 
@@ -252,7 +256,7 @@ def render_string(
 
 
 def check_is_code(vw, function_index: viv_utils.InstructionFunctionIndex, string: ExtractedString):
-    offset = string.offset
+    offset = string.range.offset
     baseaddr = vw.parsedbin.IMAGE_NT_HEADERS.OptionalHeader.ImageBase
     rva = vw.parsedbin.offsetToRva(offset) + baseaddr
 
@@ -286,7 +290,7 @@ def check_is_reloc(reloc: Optional[Range], string: ExtractedString):
     if not reloc:
         return ()
 
-    if string.offset in reloc:
+    if string.range in reloc:
         return ("#reloc",)
     else:
         return ()
@@ -445,7 +449,7 @@ def main():
             strings = list(
                 sorted(
                     itertools.chain(extract_ascii_strings(buf), extract_unicode_strings(buf)),
-                    key=lambda s: s.offset,
+                    key=lambda s: s.range.offset,
                 )
             )
 
@@ -479,7 +483,6 @@ def main():
                                 code_offsets.add(addr)
 
             reloc_range = get_reloc_range(pe) if pe else None
-            print(reloc_range)
 
             # pe is not valid outside of this block
             # because the underlying mmap is closed.
@@ -514,11 +517,7 @@ def main():
     global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
 
     def check_is_code2(code_offsets, string: ExtractedString):
-        string_length = len(string.string)
-        if string.encoding == "utf-16":
-            string_length *= 2
-
-        for addr in range(string.offset, string.offset + string_length):
+        for addr in range(string.range.offset, string.range.end):
             if addr in code_offsets:
                 return ("#code2",)
 
@@ -539,12 +538,8 @@ def main():
         string.tags.update(query_library_string_databases(library_databases, key))
         string.tags.update(query_winapi_name_database(winapi_database, key))
 
-        string_length = len(string.string.string)
-        if string.string.encoding == "utf-16":
-            string_length *= 2
-
-        start, end = string.string.offset, string.string.offset + string_length
-        overlapping_structures = list(sorted(structures_by_range.overlap(start, end), key=lambda i: i.begin))
+        r = string.string.range
+        overlapping_structures = list(sorted(structures_by_range.overlap(r.offset, r.end), key=lambda i: i.begin))
         for interval in overlapping_structures:
             # interval: intervaltree.Interval
             #
@@ -568,10 +563,14 @@ def main():
 
     if segments:
         for i, segment in enumerate(segments):
-            strings_in_segment = list(filter(lambda s: s.string.offset in segment.range, tagged_strings))
+            strings_in_segment = list(filter(lambda s: s.string.range.offset in segment.range, tagged_strings))
 
             if len(strings_in_segment) == 0:
                 continue
+
+            # TODO: if all strings in the section are hidden,
+            # such as the reloc section in PMA 03-02,
+            # then don't show the section either.
 
             if segment.type == "section":
                 try:
