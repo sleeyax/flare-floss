@@ -2,8 +2,8 @@
 
 The following databases were extracted via the vkpkg & jh technique:
 
+  - bzip2 1.0.8#3
   - zlib 1.2.13
-
 
 ## The vkpkg & jh technique
 
