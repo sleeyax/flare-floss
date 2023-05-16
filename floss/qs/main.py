@@ -328,6 +328,9 @@ def compute_file_structures(pe: pefile.PE) -> Sequence[Structure]:
                 if entry.name is None:
                     continue
 
+                if entry.name_offset is None:
+                    continue
+
                 try:
                     symbol_name = entry.name.decode("ascii")
                 except UnicodeDecodeError:
