@@ -1,3 +1,4 @@
+import os
 import re
 import sys
 import json
@@ -10,7 +11,10 @@ from typing import Set, Dict, Union, Literal, Iterable, Optional, Sequence
 from dataclasses import dataclass
 
 import pefile
+import viv_utils
 import intervaltree
+
+from halo import halo
 from rich.text import Text
 from rich.style import Style
 from rich.console import Console
@@ -96,7 +100,7 @@ def Span(text: str, style: Style = DEFAULT_STYLE) -> Text:
 def render_string(
     width: int,
     s: TaggedString,
-    tag_rules: Dict[Tag, Literal["mute"] | Literal["highlight"] | Literal["default"]],
+    tag_rules: Dict[Tag, Literal["mute"] | Literal["highlight"] | Literal["default"] | Literal["hide"]],
 ) -> Text:
     #
     #  | stringstringstring              #tag #tag #tag  00000001 |
@@ -154,6 +158,8 @@ def render_string(
         elif rule == "default":
             # no action
             pass
+        elif rule == "hide":
+            return line
         else:
             raise ValueError(f"unknown tag rule: {rule}")
 
@@ -215,6 +221,32 @@ def render_string(
         line.append_text(Span(" " * STRUCTURE_WIDTH))
 
     return line
+
+
+def check_is_code(vw, function_index: viv_utils.InstructionFunctionIndex, string: ExtractedString):
+    offset = string.offset
+    baseaddr = vw.parsedbin.IMAGE_NT_HEADERS.OptionalHeader.ImageBase
+    rva = vw.parsedbin.offsetToRva(offset) + baseaddr
+
+    try:
+        _ = function_index[rva]
+        return ("#code",)
+    except KeyError:
+        pass
+
+    return ()
+
+
+def check_is_reloc(vw, string):
+    IMAGE_DIRECTORY_ENTRY_BASERELOC = 5
+    edir = vw.parsedbin.getDataDirectory(IMAGE_DIRECTORY_ENTRY_BASERELOC)
+    rva = edir.VirtualAddress
+    rsize = edir.Size
+
+    if rva <= vw.parsedbin.offsetToRva(string.offset) < rva + rsize:
+        return ("#reloc",)
+
+    return ()
 
 
 def query_global_prevalence_database(global_prevalence_database, string):
@@ -403,6 +435,16 @@ def main():
                 segments = compute_file_segments(pe)
                 structures = compute_file_structures(pe)
 
+    should_save_workspace = os.environ.get("FLOSS_SAVE_WORKSPACE") not in ("0", "no", "NO", "n", None)
+    with halo.Halo(
+        text="analyzing program ('slow' for now using vivisect)",
+        spinner="simpleDots",
+        stream=sys.stderr,
+        enabled=not args.quiet,
+    ):
+        vw = viv_utils.getWorkspace(args.path, should_save=should_save_workspace)
+        function_index = viv_utils.InstructionFunctionIndex(vw)
+
     winapi_path = pathlib.Path(floss.qs.db.winapi.__file__).parent / "data" / "winapi"
     winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(winapi_path)
 
@@ -428,6 +470,9 @@ def main():
     for string in tagged_strings:
         key = string.string.string
 
+        string.tags.update(check_is_code(vw, function_index, string.string))
+        string.tags.update(check_is_reloc(vw, string.string))
+
         string.tags.update(query_global_prevalence_database(global_prevalence_database, key))
         string.tags.update(query_library_string_databases(library_databases, key))
         string.tags.update(query_winapi_name_database(winapi_database, key))
@@ -449,7 +494,8 @@ def main():
             break
 
     console = Console()
-    tag_rules: Dict[str, Literal["mute"] | Literal["highlight"] | Literal["default"]] = {
+    tag_rules: Dict[str, Literal["mute"] | Literal["highlight"] | Literal["default"] | Literal["hide"]] = {
+        "#code": "hide",
         "#common": "mute",
         "#zlib": "mute",
         "#bzip2": "mute",
@@ -484,15 +530,19 @@ def main():
 
             header = Span(key, style=MUTED_STYLE)
             header.pad(1)
-            header.align("center", width=console.width, character="━")
+            header.align("center", width=console.width, character="=")
             console.print(header)
 
             for string in strings_in_segment:
-                console.print(render_string(console.width, string, tag_rules))
+                s = render_string(console.width, string, tag_rules)
+                if s:
+                    console.print(s)
 
     else:
         for string in tagged_strings:
-            console.print(render_string(console.width, string, tag_rules))
+            s = render_string(console.width, string, tag_rules)
+            if s:
+                console.print(s)
 
     return 0
 
