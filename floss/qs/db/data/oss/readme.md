@@ -3,6 +3,7 @@
 The following databases were extracted via the vkpkg & jh technique:
 
   - bzip2 1.0.8#3
+  - sqlite3 3.40.0#1
   - wolfssl 5.5.0
   - zlib 1.2.13
 
