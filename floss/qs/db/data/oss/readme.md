@@ -1,6 +1,6 @@
 # Strings from Open Source libraries
 
-The following databases were extracted via the vkpkg & [jh](https://github.com/williballenthin/lancelot/blob/master/bin/src/bin/jh.rs) technique:
+The following databases were extracted via the vkpkg & jh technique:
 
   - zlib 1.2.13
 
