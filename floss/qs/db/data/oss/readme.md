@@ -21,7 +21,7 @@ We use it to easily build common open source libraries, like zlib.
 Use the triplet `x64-windows-static` to build static archives (.lib files that are AR archives containing COFF object files):
 
 ```console
-C:\Exclusions\vcpkg\vcpkg.exe install --triplet x64-windows-static zlib
+PS > C:\vcpkg\vcpkg.exe install --triplet x64-windows-static zlib
 ```
 
 ### Extract features via jh
@@ -51,7 +51,7 @@ x64-windows-static,msvc143,bzip2,1.0.8#3,release,CMakeFiles/bz2.dir/bzlib.c.obj,
 For example, to invoke jh:
 
 ```console
-~/lancelot/target/release/jh x64-windows-static msvc143 zlib 1.2.13 release ~/vcpkg/installed/x64-windows-static/lib/zlib.lib > ~/flare-floss/floss/qs/db/data/oss/zlib.csv
+$ ~/lancelot/target/release/jh x64-windows-static msvc143 zlib 1.2.13 release /mnt/c/vcpkg/installed/x64-windows-static/lib/zlib.lib > ~/flare-floss/floss/qs/db/data/oss/zlib.csv
 ```
 
 ### Convert to OSS database format
