@@ -506,6 +506,9 @@ def main():
             pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "bzip2.jsonl.gz"
         ),
         OpenSourceStringDatabase.from_file(
+            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "wolfssl.jsonl.gz"
+        ),
+        OpenSourceStringDatabase.from_file(
             pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "zlib.jsonl.gz"
         ),
         OpenSourceStringDatabase.from_file(
@@ -565,6 +568,7 @@ def main():
         "#bzip2": "mute",
         "#sqlite3": "mute",
         "#winapi": "mute",
+        "#wolfssl": "mute",
     }
 
     if segments:
