@@ -505,6 +505,9 @@ def main():
         OpenSourceStringDatabase.from_file(
             pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "zlib.jsonl.gz"
         ),
+        OpenSourceStringDatabase.from_file(
+            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "crt" / "msvc_v143.jsonl.gz"
+        ),
     )
 
     tagged_strings = list(map(lambda s: TaggedString(s, set()), strings))
