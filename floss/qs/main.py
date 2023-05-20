@@ -506,6 +506,9 @@ def main():
             pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "bzip2.jsonl.gz"
         ),
         OpenSourceStringDatabase.from_file(
+            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "jsoncpp.jsonl.gz"
+        ),
+        OpenSourceStringDatabase.from_file(
             pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "liblzma.jsonl.gz"
         ),
         OpenSourceStringDatabase.from_file(
