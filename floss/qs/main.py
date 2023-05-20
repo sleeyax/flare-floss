@@ -511,6 +511,7 @@ def main():
             "jsoncpp.jsonl.gz",
             "liblzma.jsonl.gz",
             "mbedtls.jsonl.gz",
+            "openssl.jsonl.gz",
             "sqlite3.jsonl.gz",
             "wolfssl.jsonl.gz",
             "zlib.jsonl.gz",

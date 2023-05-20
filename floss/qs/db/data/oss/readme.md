@@ -9,6 +9,7 @@ The following databases were extracted via the vkpkg & jh technique:
   - jsoncpp 1.9.5
   - liblzma 5.2.5#6
   - mbedtls 2.28.1
+  - openssl 3.0.7#1
   - sqlite3 3.40.0#1
   - wolfssl 5.5.0
   - zlib 1.2.13
