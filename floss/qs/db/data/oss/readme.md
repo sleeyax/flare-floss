@@ -3,6 +3,7 @@
 The following databases were extracted via the vkpkg & jh technique:
 
   - bzip2 1.0.8#3
+  - detours 4.0.1#7
   - jsoncpp 1.9.5
   - liblzma 5.2.5#6
   - mbedtls 2.28.1
