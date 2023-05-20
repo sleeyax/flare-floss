@@ -501,31 +501,23 @@ def main():
     winapi_path = pathlib.Path(floss.qs.db.winapi.__file__).parent / "data" / "winapi"
     winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(winapi_path)
 
-    library_databases = (
-        OpenSourceStringDatabase.from_file(
-            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "bzip2.jsonl.gz"
-        ),
-        OpenSourceStringDatabase.from_file(
-            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "jsoncpp.jsonl.gz"
-        ),
-        OpenSourceStringDatabase.from_file(
-            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "liblzma.jsonl.gz"
-        ),
-        OpenSourceStringDatabase.from_file(
-            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "mbedtls.jsonl.gz"
-        ),
-        OpenSourceStringDatabase.from_file(
-            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "sqlite3.jsonl.gz"
-        ),
-        OpenSourceStringDatabase.from_file(
-            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "wolfssl.jsonl.gz"
-        ),
-        OpenSourceStringDatabase.from_file(
-            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / "zlib.jsonl.gz"
-        ),
+    library_databases = [
+        OpenSourceStringDatabase.from_file(pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / filename)
+        for filename in (
+            "bzip2.jsonl.gz",
+            "jsoncpp.jsonl.gz",
+            "liblzma.jsonl.gz",
+            "mbedtls.jsonl.gz",
+            "sqlite3.jsonl.gz",
+            "wolfssl.jsonl.gz",
+            "zlib.jsonl.gz",
+        )
+    ]
+
+    library_databases.append(
         OpenSourceStringDatabase.from_file(
             pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "crt" / "msvc_v143.jsonl.gz"
-        ),
+        )
     )
 
     tagged_strings = list(map(lambda s: TaggedString(s, set()), strings))
