@@ -607,9 +607,9 @@ def main():
             else:
                 raise NotImplementedError(segment.type)
 
-            header = Span(key, style=MUTED_STYLE)
+            header = Span(key, style=Style(color="blue"))
             header.pad(1)
-            header.align("center", width=console.width, character="=")
+            header.align("center", width=console.width, character="━")
             console.print(header)
 
             for string in strings_in_segment:
