@@ -3,6 +3,7 @@
 The following databases were extracted via the vkpkg & jh technique:
 
   - bzip2 1.0.8#3
+  - cryptopp 8.7.0
   - curl 7.86.0#1
   - detours 4.0.1#7
   - jsoncpp 1.9.5
