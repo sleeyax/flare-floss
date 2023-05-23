@@ -23,7 +23,7 @@ from rich.console import Console
 
 import floss.qs.db.oss
 import floss.qs.db.winapi
-from floss.qs.db.gp import StringGlobalPrevalenceDatabase, StringHashDatabase
+from floss.qs.db.gp import StringHashDatabase, StringGlobalPrevalenceDatabase
 from floss.qs.db.oss import OpenSourceStringDatabase
 from floss.qs.db.winapi import WindowsApiStringDatabase
 
@@ -129,11 +129,107 @@ def Span(text: str, style: Style = DEFAULT_STYLE) -> Text:
     return Text(text, style=style, no_wrap=True, overflow="ellipsis", end="")
 
 
-def render_string(
-    width: int,
-    s: TaggedString,
-    tag_rules: Dict[Tag, Literal["mute"] | Literal["highlight"] | Literal["default"] | Literal["hide"]],
-) -> Text:
+PADDING_WIDTH = 2
+OFFSET_WIDTH = 8
+STRUCTURE_WIDTH = 16
+
+
+def render_string_padding():
+    return Span(" " * PADDING_WIDTH)
+
+
+TagRules = Dict[Tag, Literal["mute"] | Literal["highlight"] | Literal["default"] | Literal["hide"]]
+
+
+def should_hide_string(s: TaggedString, tag_rules: TagRules) -> bool:
+    return any(map(lambda tag: tag_rules.get(tag) == "hide", s.tags))
+
+
+def compute_string_style(s: TaggedString, tag_rules: TagRules) -> Optional[Style]:
+    """compute the style for a string based on its tags
+
+    returns: Style, or None if the string should be hidden.
+    """
+    styles = set(tag_rules.get(tag, "mute") for tag in s.tags)
+
+    # precedence:
+    #
+    #  1. highlight
+    #  2. hide
+    #  3. mute
+    #  4. default
+    if "highlight" in styles:
+        return HIGHLIGHT_STYLE
+    elif "hide" in styles:
+        return None
+    elif "mute" in styles:
+        return MUTED_STYLE
+    else:
+        return DEFAULT_STYLE
+
+
+def render_string_string(s: TaggedString, tag_rules: TagRules) -> Text:
+    string_style = compute_string_style(s, tag_rules)
+    if string_style is None:
+        raise ValueError("string should be hidden")
+
+    # render like json, but strip the leading/trailing quote marks.
+    # this means that whitespace characters like \t and \n will be rendered as such,
+    # which ensures that the rendered string will be a single line.
+    rendered_string = json.dumps(s.string.string)[1:-1]
+    return Span(rendered_string, style=string_style)
+
+
+def render_string_tags(s: TaggedString, tag_rules: TagRules):
+    ret = Text()
+
+    for i, tag in enumerate(sorted(s.tags)):
+        tag_style = DEFAULT_STYLE
+        rule = tag_rules.get(tag, "mute")
+        if rule == "highlight":
+            tag_style = HIGHLIGHT_STYLE
+        elif rule == "mute":
+            tag_style = MUTED_STYLE
+        elif rule == "default":
+            tag_style = DEFAULT_STYLE
+        else:
+            raise ValueError(f"unknown tag rule: {rule}")
+
+        ret.append_text(Span(tag, style=tag_style))
+        if i < len(s.tags) - 1:
+            ret.append_text(Span(" "))
+
+    return ret
+
+
+def render_string_offset(s: TaggedString):
+    # render the 000 prefix of the 8-digit offset in muted gray
+    # and the non-zero suffix as blue.
+    offset_chars = f"{s.string.range.offset:08x}"
+    unpadded = offset_chars.lstrip("0")
+    padding_width = len(offset_chars) - len(unpadded)
+
+    offset = Span("")
+    offset.append_text(Span("0" * padding_width, style=MUTED_STYLE))
+    offset.append_text(Span(unpadded, style=Style(color="blue")))
+
+    return offset
+
+
+def render_string_structure(s: TaggedString):
+    ret = Text()
+
+    if s.structure:
+        structure = Span("/" + s.structure, style=MUTED_STYLE)
+        structure.align("left", STRUCTURE_WIDTH)
+        ret.append(structure)
+    else:
+        ret.append_text(Span(" " * STRUCTURE_WIDTH))
+
+    return ret
+
+
+def render_string(width: int, s: TaggedString, tag_rules: TagRules) -> Text:
     #
     #  | stringstringstring              #tag #tag #tag  00000001 |
     #  | stringstring                              #tag  0000004A |
@@ -161,96 +257,24 @@ def render_string(
     #   padding: 2
     #   string: variable
 
-    PADDING_WIDTH = 2
-    OFFSET_WIDTH = 8
-    STRUCTURE_WIDTH = 16
-    # length of each tag + 1 space between tags
-    TAG_WIDTH = (sum(map(len, s.tags)) + len(s.tags) - 1) if s.tags else 0
-    RIGHT_WIDTH = STRUCTURE_WIDTH + PADDING_WIDTH + OFFSET_WIDTH + PADDING_WIDTH + TAG_WIDTH + PADDING_WIDTH
-    LEFT_WIDTH = width - RIGHT_WIDTH
+    left = render_string_string(s, tag_rules)
 
-    line = Text()
+    right = Span("")
+    right.append_text(render_string_padding())
+    right.append_text(render_string_tags(s, tag_rules))
+    right.append_text(render_string_padding())
+    right.append_text(render_string_offset(s))
+    right.append_text(render_string_structure(s))
 
-    string_style = DEFAULT_STYLE
-    for tag in s.tags:
-        if string_style == HIGHLIGHT_STYLE:
-            # highlight overrules mute.
-            # if we're already highlight, don't mute
-            continue
-
-        # string style is either muted or default
-        rule = tag_rules.get(tag, "mute")
-        if rule == "highlight":
-            # upgrade to highlight
-            string_style = HIGHLIGHT_STYLE
-        elif rule == "mute":
-            # default -> mute
-            # mute -> mute
-            string_style = MUTED_STYLE
-        elif rule == "default":
-            # no action
-            pass
-        elif rule == "hide":
-            return line
-        else:
-            raise ValueError(f"unknown tag rule: {rule}")
-
-    # render like json, but strip the leading/trailing quote marks.
-    # this means that whitespace characters like \t and \n will be rendered as such,
-    # which ensures that the rendered string will be a single line.
-    rendered_string = json.dumps(s.string.string)[1:-1]
-    string = Span(rendered_string, style=string_style)
     # this alignment clips the string if it's too long,
     # leaving an ellipsis at the end when it would collide with a tag/offset.
     # this is bad for showing all data verbatim,
     # but is good for the common case of triage analysis.
-    string.align("left", LEFT_WIDTH)
+    left.align("left", width - len(right))
 
-    line.append_text(string)
-
-    line.append_text(Span(" " * PADDING_WIDTH))
-
-    tags = Text()
-    for i, tag in enumerate(sorted(s.tags)):
-        tag_style = DEFAULT_STYLE
-        rule = tag_rules.get(tag, "mute")
-        if rule == "highlight":
-            tag_style = HIGHLIGHT_STYLE
-        elif rule == "mute":
-            tag_style = MUTED_STYLE
-        elif rule == "default":
-            tag_style = DEFAULT_STYLE
-        else:
-            raise ValueError(f"unknown tag rule: {rule}")
-
-        tags.append_text(Span(tag, style=tag_style))
-        if i < len(s.tags) - 1:
-            tags.append_text(Span(" "))
-
-    tags.align("right", TAG_WIDTH)
-    line.append_text(tags)
-
-    line.append_text(Span(" " * PADDING_WIDTH))
-
-    if True:
-        # render the 000 prefix of the 8-digit offset in muted gray
-        # and the non-zero suffix as blue.
-        offset_chars = f"{s.string.range.offset:08x}"
-        unpadded = offset_chars.lstrip("0")
-        padding_width = len(offset_chars) - len(unpadded)
-
-        offset = Span("")
-        offset.append_text(Span("0" * padding_width, style=MUTED_STYLE))
-        offset.append_text(Span(unpadded, style=Style(color="blue")))
-        line.append_text(offset)
-
-    if s.structure:
-        structure = Span("/" + s.structure, style=MUTED_STYLE)
-        structure.align("left", STRUCTURE_WIDTH)
-        line.append(structure)
-    else:
-        line.append_text(Span(" " * PADDING_WIDTH))
-        line.append_text(Span(" " * STRUCTURE_WIDTH))
+    line = Text()
+    line.append_text(left)
+    line.append_text(right)
 
     return line
 
@@ -533,11 +557,7 @@ def main():
         )
     ]
 
-    library_databases.append(
-        OpenSourceStringDatabase.from_file(
-            data_path / "crt" / "msvc_v143.jsonl.gz"
-        )
-    )
+    library_databases.append(OpenSourceStringDatabase.from_file(data_path / "crt" / "msvc_v143.jsonl.gz"))
 
     tagged_strings = list(map(lambda s: TaggedString(s, set()), strings))
 
@@ -583,7 +603,7 @@ def main():
             break
 
     console = Console()
-    tag_rules: Dict[str, Literal["mute"] | Literal["highlight"] | Literal["default"] | Literal["hide"]] = {
+    tag_rules: TagRules = {
         # "#code": "hide",
         "#reloc": "hide",
         "#common": "mute",
@@ -597,6 +617,7 @@ def main():
     if segments:
         for i, segment in enumerate(segments):
             strings_in_segment = list(filter(lambda s: s.string.range.offset in segment.range, tagged_strings))
+            strings_in_segment = list(filter(lambda s: not should_hide_string(s, tag_rules), strings_in_segment))
 
             if len(strings_in_segment) == 0:
                 continue
