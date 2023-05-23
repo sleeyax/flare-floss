@@ -23,7 +23,7 @@ from rich.console import Console
 
 import floss.qs.db.oss
 import floss.qs.db.winapi
-from floss.qs.db.gp import StringGlobalPrevalenceDatabase
+from floss.qs.db.gp import StringGlobalPrevalenceDatabase, StringHashDatabase
 from floss.qs.db.oss import OpenSourceStringDatabase
 from floss.qs.db.winapi import WindowsApiStringDatabase
 
@@ -296,8 +296,15 @@ def check_is_reloc(reloc: Optional[Range], string: ExtractedString):
         return ()
 
 
-def query_global_prevalence_database(global_prevalence_database, string):
-    if global_prevalence_database.query(string):
+def query_global_prevalence_database(db: StringGlobalPrevalenceDatabase, string: str):
+    if db.query(string):
+        return ("#common",)
+
+    return ()
+
+
+def query_global_prevalence_hash_database(db: StringHashDatabase, string: str):
+    if string in db:
         return ("#common",)
 
     return ()
@@ -501,8 +508,10 @@ def main():
     winapi_path = pathlib.Path(floss.qs.db.winapi.__file__).parent / "data" / "winapi"
     winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(winapi_path)
 
+    data_path = pathlib.Path(floss.qs.db.oss.__file__).parent / "data"
+
     library_databases = [
-        OpenSourceStringDatabase.from_file(pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / filename)
+        OpenSourceStringDatabase.from_file(data_path / "oss" / filename)
         for filename in (
             "brotli.jsonl.gz",
             "bzip2.jsonl.gz",
@@ -526,18 +535,17 @@ def main():
 
     library_databases.append(
         OpenSourceStringDatabase.from_file(
-            pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "crt" / "msvc_v143.jsonl.gz"
+            data_path / "crt" / "msvc_v143.jsonl.gz"
         )
     )
 
     tagged_strings = list(map(lambda s: TaggedString(s, set()), strings))
 
-    gp_path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "gp.jsonl.gz"
-    global_prevalence_database = StringGlobalPrevalenceDatabase.from_file(gp_path)
-    gp_path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "cwindb-native.jsonl.gz"
-    global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
-    gp_path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "cwindb-dotnet.jsonl.gz"
-    global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path))
+    gp_path = data_path / "gp"
+    global_prevalence_database = StringGlobalPrevalenceDatabase.from_file(gp_path / "gp.jsonl.gz")
+    global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path / "cwindb-native.jsonl.gz"))
+    global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path / "cwindb-dotnet.jsonl.gz"))
+    global_prevalence_hash_database = StringHashDatabase.from_file(gp_path / "xaa-hashes.bin")
 
     def check_is_code2(code_offsets, string: ExtractedString):
         for addr in range(string.range.offset, string.range.end):
@@ -558,6 +566,7 @@ def main():
         string.tags.update(check_is_reloc(reloc_range, string.string))
 
         string.tags.update(query_global_prevalence_database(global_prevalence_database, key))
+        string.tags.update(query_global_prevalence_hash_database(global_prevalence_hash_database, key))
         string.tags.update(query_library_string_databases(library_databases, key))
         string.tags.update(query_winapi_name_database(winapi_database, key))
 
