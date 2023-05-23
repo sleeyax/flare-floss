@@ -513,6 +513,7 @@ def main():
             "jsoncpp.jsonl.gz",
             "kcp.jsonl.gz",
             "liblzma.jsonl.gz",
+            "libsodium.jsonl.gz",
             "mbedtls.jsonl.gz",
             "openssl.jsonl.gz",
             "sqlite3.jsonl.gz",

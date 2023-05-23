@@ -23,6 +23,7 @@ The following databases were extracted via the vkpkg & jh technique:
   - jsoncpp 1.9.5
   - kcp 1.7
   - liblzma 5.2.5#6
+  - libsodium 1.0.18#8
   - mbedtls 2.28.1
   - openssl 3.0.7#1
   - sqlite3 3.40.0#1
