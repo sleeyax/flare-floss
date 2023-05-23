@@ -1,5 +1,17 @@
 # Strings from Open Source libraries
 
+This directory contains databases of strings extracted from open soure software. FLOSS uses these databases to show the user when a string is likely from a library.
+
+There is one file for each database. Each database is a gzip-compressed, JSONL (one JSON document per line) file.
+The JSON document looks like this:
+
+    string: "1.0.8, 13-Jul-2019"
+    library_name: "bzip2"
+    library_version: "1.0.8#3"
+    file_path: "CMakeFiles/bz2.dir/bzlib.c.obj"
+    function_name: "BZ2_bzlibVersion"
+    line_number: null
+
 The following databases were extracted via the vkpkg & jh technique:
 
   - bzip2 1.0.8#3
