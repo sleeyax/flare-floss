@@ -1,7 +1,8 @@
 import gzip
+import hashlib
 import pathlib
 import datetime
-from typing import Dict, List, Literal
+from typing import Dict, List, Literal, Set
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -89,3 +90,34 @@ class StringGlobalPrevalenceDatabase:
                 for k, v in sorted(self.metadata_by_string.items(), key=lambda x: x[1][0].global_count, reverse=True):
                     for e in v:
                         f.write(msgspec.json.encode(e).decode("utf-8") + "\n")
+
+
+@dataclass
+class StringHashDatabase:
+    string_hashes: Set[bytes]
+
+    def __len__(self) -> int:
+        return len(self.string_hashes)
+
+    def __contains__(self, other: bytes | str) -> bool:
+        if isinstance(other, bytes):
+            return other in self.string_hashes
+        elif isinstance(other, str):
+            m = hashlib.md5()
+            m.update(other.encode("utf-8"))
+            return m.digest()[:8] in self.string_hashes
+        else:
+            raise ValueError("other must be bytes or str")
+
+    @classmethod
+    def from_file(cls, path: pathlib.Path) -> "StringHashDatabase":
+        string_hashes: Set[bytes] = set()
+
+        buf = path.read_bytes()
+
+        for i in range(0, len(buf), 8):
+            string_hashes.add(buf[i : i + 8])
+
+        return cls(
+            string_hashes=string_hashes,
+        )

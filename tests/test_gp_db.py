@@ -26,3 +26,18 @@ def test_query_db():
     assert s.encoding == 'ascii'
     assert s.global_count == 424466
     assert s.location == None
+
+
+def test_load_hash_db():
+    path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "xaa-hashes.bin"
+    db = floss.qs.db.gp.StringHashDatabase.from_file(path)
+
+    assert len(db) > 0
+
+
+def test_query_hash_db():
+    path = pathlib.Path(floss.qs.db.gp.__file__).parent / "data" / "gp" / "xaa-hashes.bin"
+    db = floss.qs.db.gp.StringHashDatabase.from_file(path)
+
+    assert "!This program cannot be run in DOS mode." in db
+    assert "Willi rules" not in db
