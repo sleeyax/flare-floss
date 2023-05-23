@@ -1,5 +1,5 @@
-import pathlib
 import gzip
+import pathlib
 from typing import Set
 from dataclasses import dataclass
 

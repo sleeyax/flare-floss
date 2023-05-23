@@ -25,6 +25,7 @@ import floss.qs.db.oss
 import floss.qs.db.winapi
 from floss.qs.db.gp import StringHashDatabase, StringGlobalPrevalenceDatabase
 from floss.qs.db.oss import OpenSourceStringDatabase
+from floss.qs.db.expert import ExpertStringDatabase
 from floss.qs.db.winapi import WindowsApiStringDatabase
 
 MIN_STR_LEN = 6
@@ -352,6 +353,10 @@ def query_library_string_databases(dbs: Sequence[OpenSourceStringDatabase], stri
     return tuple(tags)
 
 
+def query_expert_string_database(db: ExpertStringDatabase, string: str) -> Sequence[Tag]:
+    return tuple(db.query(string))
+
+
 def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Sequence[Tag]:
     if string.lower() in db.dll_names:
         return ("#winapi",)
@@ -535,10 +540,12 @@ def main():
         vw = viv_utils.getWorkspace(args.path, should_save=should_save_workspace)
         function_index = viv_utils.InstructionFunctionIndex(vw)
 
-    winapi_path = pathlib.Path(floss.qs.db.winapi.__file__).parent / "data" / "winapi"
-    winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(winapi_path)
 
     data_path = pathlib.Path(floss.qs.db.oss.__file__).parent / "data"
+
+    winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(data_path / "winapi")
+
+    capa_expert_database = ExpertStringDatabase.from_file(data_path / "expert" / "capa.jsonl")
 
     library_databases = [
         OpenSourceStringDatabase.from_file(data_path / "oss" / filename)
@@ -594,6 +601,7 @@ def main():
         string.tags.update(query_global_prevalence_database(global_prevalence_database, key))
         string.tags.update(query_global_prevalence_hash_database(global_prevalence_hash_database, key))
         string.tags.update(query_library_string_databases(library_databases, key))
+        string.tags.update(query_expert_string_database(capa_expert_database, key))
         string.tags.update(query_winapi_name_database(winapi_database, key))
 
         r = string.string.range
@@ -618,6 +626,7 @@ def main():
         "#sqlite3": "mute",
         "#winapi": "mute",
         "#wolfssl": "mute",
+        "#capa": "highlight",
     }
 
     if segments:
