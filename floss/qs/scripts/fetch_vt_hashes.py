@@ -65,27 +65,26 @@ selected mime types from one hour of VT data:
      35 ELF 32-bit LSB shared object, ARM, version 1 (SYSV), dynamically linked (uses shared libs), stripped
 """
 
-import datetime
-import hashlib
-import json
+import io
 import os
 import bz2
-import io
-import requests
-import shelve
-import pathlib
 import sys
+import json
+import shelve
+import hashlib
 import logging
+import pathlib
 import argparse
-from typing import Any, Iterator, List
+import datetime
+from typing import Any, List, Iterator
 
+import requests
 import virustotal3.errors
-
 
 logger = logging.getLogger(__name__)
 
 
-API_KEY = os.environ['VT_API_KEY']
+API_KEY = os.environ["VT_API_KEY"]
 
 
 # TypeAlias. note: using `foo: TypeAlias = bar` is Python 3.10+
@@ -156,14 +155,14 @@ def _raise_exception(response):
 
 
 def _get_feed(api_key, type_, time, timeout=None):
-    """ Get a minute from a feed
+    """Get a minute from a feed
 
     Parameters:
         api_key (str): VT key
         type_ (str): type of feed to get
         time (str): YYYYMMDDhhmm
         timeout (float, optional): The amount of time in seconds the request should wait before timing out.
-    
+
     Returns:
         StringIO: each line is a json string for one report
 
@@ -172,10 +171,11 @@ def _get_feed(api_key, type_, time, timeout=None):
     if api_key is None:
         raise Exception("You must provide a valid API key")
 
-    response = requests.get('https://www.virustotal.com/api/v3/feeds/{}/{}'.format(type_, time),
-                            headers={'x-apikey': api_key,
-                                        'Content-Type': 'application/json'},
-                            timeout=timeout)
+    response = requests.get(
+        "https://www.virustotal.com/api/v3/feeds/{}/{}".format(type_, time),
+        headers={"x-apikey": api_key, "Content-Type": "application/json"},
+        timeout=timeout,
+    )
 
     if response.status_code != 200:
         _raise_exception(response)
@@ -195,7 +195,7 @@ def file_feed(api_key, time, timeout=None):
         api_key (str): VirusTotal key
         time (str): YYYYMMDDhhmm
         timeout (float, optional): The amount of time in seconds the request should wait before timing out.
-    
+
     Returns:
         StringIO: each line is a json string for one report
 
@@ -229,7 +229,9 @@ def fetch_feed(api_key: str, ts: datetime.datetime) -> Iterator[Any]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="fetch the hashes of PE files from the VT feed for the given time range.")
+    parser = argparse.ArgumentParser(
+        description="fetch the hashes of PE files from the VT feed for the given time range."
+    )
     parser.add_argument("start", help="timestamp to start, YYYYMMDDhhmm")
     parser.add_argument("end", help="timestamp to start, YYYYMMDDhhmm")
 
@@ -250,7 +252,6 @@ def main():
         logging.basicConfig(level=logging.INFO)
         logging.getLogger().setLevel(logging.INFO)
 
-
     start = datetime.datetime.strptime(args.start, "%Y%m%d%H%M")
     end = datetime.datetime.strptime(args.end, "%Y%m%d%H%M")
 
@@ -266,7 +267,7 @@ def main():
 
                 if "magic" not in line.get("attributes", {}) or "sha256" not in line.get("attributes", {}):
                     continue
-                
+
                 magic = line["attributes"]["magic"]
                 if any(map(lambda prefix: magic.startswith(prefix), ["PE32", "ELF", "MS-DOS", "Mach-O", "COM"])):
                     print(line["attributes"]["sha256"])

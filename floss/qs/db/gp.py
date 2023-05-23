@@ -2,7 +2,7 @@ import gzip
 import hashlib
 import pathlib
 import datetime
-from typing import Dict, List, Literal, Set
+from typing import Set, Dict, List, Literal
 from collections import defaultdict
 from dataclasses import dataclass
 

@@ -1,6 +1,6 @@
 import re
 import pathlib
-from typing import Dict, Set, Literal, List
+from typing import Set, Dict, List, Literal
 from dataclasses import dataclass
 
 import msgspec

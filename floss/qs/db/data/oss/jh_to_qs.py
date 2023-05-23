@@ -24,7 +24,6 @@ import msgspec
 
 import floss.qs.db.oss
 
-
 p = pathlib.Path(sys.argv[1])
 for line in p.read_text().split("\n"):
     if not line:

@@ -540,7 +540,6 @@ def main():
         vw = viv_utils.getWorkspace(args.path, should_save=should_save_workspace)
         function_index = viv_utils.InstructionFunctionIndex(vw)
 
-
     data_path = pathlib.Path(floss.qs.db.oss.__file__).parent / "data"
 
     winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(data_path / "winapi")

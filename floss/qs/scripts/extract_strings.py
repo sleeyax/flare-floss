@@ -16,6 +16,7 @@ from typing import List, Tuple
 
 import dnfile
 import pefile
+
 import floss.strings
 from floss.qs.db.gp import Encoding, Location
 
