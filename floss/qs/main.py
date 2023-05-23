@@ -514,6 +514,7 @@ def main():
             "kcp.jsonl.gz",
             "liblzma.jsonl.gz",
             "libsodium.jsonl.gz",
+            "libpcap.jsonl.gz",
             "mbedtls.jsonl.gz",
             "openssl.jsonl.gz",
             "sqlite3.jsonl.gz",

@@ -24,6 +24,7 @@ The following databases were extracted via the vkpkg & jh technique:
   - kcp 1.7
   - liblzma 5.2.5#6
   - libsodium 1.0.18#8
+  - libpcap 1.10.1#3
   - mbedtls 2.28.1
   - openssl 3.0.7#1
   - sqlite3 3.40.0#1
