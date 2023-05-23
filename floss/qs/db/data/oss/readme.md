@@ -21,6 +21,7 @@ The following databases were extracted via the vkpkg & jh technique:
   - detours 4.0.1#7
   - jemalloc 5.3.0#1
   - jsoncpp 1.9.5
+  - kcp 1.7
   - liblzma 5.2.5#6
   - mbedtls 2.28.1
   - openssl 3.0.7#1

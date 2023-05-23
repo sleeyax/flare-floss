@@ -511,6 +511,7 @@ def main():
             "detours.jsonl.gz",
             "jemalloc.jsonl.gz",
             "jsoncpp.jsonl.gz",
+            "kcp.jsonl.gz",
             "liblzma.jsonl.gz",
             "mbedtls.jsonl.gz",
             "openssl.jsonl.gz",
