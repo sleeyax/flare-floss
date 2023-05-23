@@ -504,6 +504,7 @@ def main():
     library_databases = [
         OpenSourceStringDatabase.from_file(pathlib.Path(floss.qs.db.oss.__file__).parent / "data" / "oss" / filename)
         for filename in (
+            "brotli.jsonl.gz",
             "bzip2.jsonl.gz",
             "cryptopp.jsonl.gz",
             "curl.jsonl.gz",

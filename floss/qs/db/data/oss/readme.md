@@ -14,6 +14,7 @@ The JSON document looks like this:
 
 The following databases were extracted via the vkpkg & jh technique:
 
+  - brotli 1.0.9#5
   - bzip2 1.0.8#3
   - cryptopp 8.7.0
   - curl 7.86.0#1
