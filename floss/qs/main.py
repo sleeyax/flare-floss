@@ -509,6 +509,7 @@ def main():
             "cryptopp.jsonl.gz",
             "curl.jsonl.gz",
             "detours.jsonl.gz",
+            "jemalloc.jsonl.gz",
             "jsoncpp.jsonl.gz",
             "liblzma.jsonl.gz",
             "mbedtls.jsonl.gz",

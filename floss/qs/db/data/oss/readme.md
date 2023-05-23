@@ -19,6 +19,7 @@ The following databases were extracted via the vkpkg & jh technique:
   - cryptopp 8.7.0
   - curl 7.86.0#1
   - detours 4.0.1#7
+  - jemalloc 5.3.0#1
   - jsoncpp 1.9.5
   - liblzma 5.2.5#6
   - mbedtls 2.28.1
