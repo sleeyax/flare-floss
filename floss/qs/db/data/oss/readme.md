@@ -28,6 +28,7 @@ The following databases were extracted via the vkpkg & jh technique:
   - mbedtls 2.28.1
   - openssl 3.0.7#1
   - sqlite3 3.40.0#1
+  - tomcrypt 1.18.2#2
   - wolfssl 5.5.0
   - zlib 1.2.13
 

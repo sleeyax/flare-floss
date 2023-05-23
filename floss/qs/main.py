@@ -518,6 +518,7 @@ def main():
             "mbedtls.jsonl.gz",
             "openssl.jsonl.gz",
             "sqlite3.jsonl.gz",
+            "tomcrypt.jsonl.gz",
             "wolfssl.jsonl.gz",
             "zlib.jsonl.gz",
         )
