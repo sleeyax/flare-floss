@@ -183,7 +183,13 @@ def render_string_string(s: TaggedString, tag_rules: TagRules) -> Text:
 def render_string_tags(s: TaggedString, tag_rules: TagRules):
     ret = Text()
 
-    for i, tag in enumerate(sorted(s.tags)):
+    tags = s.tags
+    if len(tags) != 1 and "#common" in tags:
+        # don't show #common if there are other tags,
+        # because the other tags will be more specific (like library names).
+        tags.remove("#common")
+
+    for i, tag in enumerate(sorted(tags)):
         tag_style = DEFAULT_STYLE
         rule = tag_rules.get(tag, "mute")
         if rule == "highlight":
