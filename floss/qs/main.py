@@ -523,8 +523,8 @@ def main():
                         logger.warning("lancelot failed to load workspace: %s", e)
 
                 with timing("lancelot: find code"):
-                    if pe is not None and ws is not None and pe.OPTIONAL_HEADER is not None:
-                        base_address = pe.OPTIONAL_HEADER.ImageBase
+                    if ws is not None and pe is not None:
+                        base_address = ws.base_address
                         for function in ws.get_functions():
                             cfg = ws.build_cfg(function)
                             for bb in cfg.basic_blocks.values():
