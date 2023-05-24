@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import pefile
 import lancelot
+import vivisect
 import viv_utils
 import intervaltree
 import rich.traceback
@@ -21,7 +22,6 @@ from halo import halo
 from rich.text import Text
 from rich.style import Style
 from rich.console import Console
-
 
 import floss.qs.db.oss
 import floss.qs.db.winapi
@@ -32,7 +32,7 @@ from floss.qs.db.winapi import WindowsApiStringDatabase
 
 MIN_STR_LEN = 6
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("quantumstrand")
 
 
 @contextlib.contextmanager
@@ -288,7 +288,9 @@ def render_string(width: int, s: TaggedString, tag_rules: TagRules) -> Text:
     return line
 
 
-def check_is_code(vw, function_index: viv_utils.InstructionFunctionIndex, string: ExtractedString):
+def check_is_code(
+    vw: vivisect.VivWorkspace, function_index: viv_utils.InstructionFunctionIndex, string: ExtractedString
+):
     offset = string.range.offset
     baseaddr = vw.parsedbin.IMAGE_NT_HEADERS.OptionalHeader.ImageBase
     rva = vw.parsedbin.offsetToRva(offset) + baseaddr
@@ -504,29 +506,31 @@ def main():
             structures: Sequence[Structure] = []
             try:
                 pe = pefile.PE(data=buf)
-            except Exception as e:
-                logger.warning("failed to parse as PE: %s", e, exc_info=True)
+            except pefile.PEFormatError as e:
+                # this is ok, we'll just process the file as raw binary
+                logger.debug("not a PE file")
             else:
                 segments = compute_file_segments(pe)
                 structures = compute_file_structures(pe)
 
-            # lancelot only accepts bytes, not mmap
-            # TODO: fix but during load of pma05-01
-            with timing("lancelot: load workspace"):
-                ws = lancelot.from_bytes(bytes(buf))
-
             # contains the file offsets of bytes that are part of recognized instructions.
             code_offsets = set()
-            with timing("lancelot: find code"):
-                if pe is not None and pe.OPTIONAL_HEADER is not None:
-                    base_address = pe.OPTIONAL_HEADER.ImageBase
-                    for function in ws.get_functions():
-                        cfg = ws.build_cfg(function)
-                        for bb in cfg.basic_blocks.values():
-                            # VA -> RVA -> file offset
-                            offset = pe.get_offset_from_rva(bb.address - base_address)
-                            for addr in range(offset, offset + bb.length):
-                                code_offsets.add(addr)
+            if pe:
+                # lancelot only accepts bytes, not mmap
+                # TODO: fix bug during load of pma05-01
+                with timing("lancelot: load workspace"):
+                    ws = lancelot.from_bytes(bytes(buf))
+
+                with timing("lancelot: find code"):
+                    if pe is not None and pe.OPTIONAL_HEADER is not None:
+                        base_address = pe.OPTIONAL_HEADER.ImageBase
+                        for function in ws.get_functions():
+                            cfg = ws.build_cfg(function)
+                            for bb in cfg.basic_blocks.values():
+                                # VA -> RVA -> file offset
+                                offset = pe.get_offset_from_rva(bb.address - base_address)
+                                for addr in range(offset, offset + bb.length):
+                                    code_offsets.add(addr)
 
             reloc_range = get_reloc_range(pe) if pe else None
 
@@ -597,7 +601,10 @@ def main():
     for string in tagged_strings:
         key = string.string.string
 
-        string.tags.update(check_is_code(vw, function_index, string.string))
+        if vw.getMeta("Format") == "pe":
+            # only supports fetching strings from PE files due to structure access.
+            string.tags.update(check_is_code(vw, function_index, string.string))
+
         string.tags.update(check_is_code2(code_offsets, string.string))
         string.tags.update(check_is_reloc(reloc_range, string.string))
 
