@@ -5,6 +5,7 @@ on:
     branches: [ master ]
   release:
     types: [edited, published]
+    branches: [ master ]
 
 jobs:
   build:
