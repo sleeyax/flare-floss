@@ -77,7 +77,7 @@ import logging
 import pathlib
 import argparse
 import datetime
-from typing import Any, Iterator
+from typing import Any, Iterator, List
 
 import requests
 import virustotal3.errors
@@ -206,6 +206,14 @@ def file_feed(api_key, time, timeout=None):
 
 
 def fetch_feed(api_key: str, ts: datetime.datetime) -> Iterator[Any]:
+    feed = file_feed(api_key, format_timestamp(ts)).read().decode("utf-8")
+    for line in feed.split("\n"):
+        if not line:
+            continue
+        yield json.loads(line)
+ 
+
+def fetch_feed_hashes(api_key: str, ts: datetime.datetime) -> List[str]:
     ts_key = format_timestamp(ts)
 
     dir = pathlib.Path(get_default_cache_directory())
@@ -216,18 +224,29 @@ def fetch_feed(api_key: str, ts: datetime.datetime) -> Iterator[Any]:
     with shelve.open(str(p)) as db:
         if ts_key not in db:
             try:
-                db[ts_key] = gzip.compress(file_feed(api_key, ts_key).read())
+                hashes = []
+                for line in fetch_feed(API_KEY, ts):
+                    try:
+                        if line.get("type") != "file":
+                            continue
+
+                        if "magic" not in line.get("attributes", {}) or "sha256" not in line.get("attributes", {}):
+                            continue
+
+                        magic = line["attributes"]["magic"]
+                        if any(map(lambda prefix: magic.startswith(prefix), ["PE32", "ELF", "MS-DOS", "Mach-O", "COM"])):
+                            hashes.append(line["attributes"]["sha256"])
+                    except Exception as e:
+                        logger.warning("error: %s", str(e), exc_info=True)
+                        continue
+                 
+                db[ts_key] = hashes
             except Exception as e:
                 logger.warning("error: %s", str(e), exc_info=True)
-                return
+                return []
 
-        feed = gzip.decompress(db[ts_key]).decode("utf-8")
-
-    for line in feed.split("\n"):
-        if not line:
-            continue
-        yield json.loads(line)
-
+        return db[ts_key]
+ 
 
 def main():
     parser = argparse.ArgumentParser(
@@ -261,20 +280,8 @@ def main():
     current = start
     while format_timestamp(current) < format_timestamp(end):
         logger.info("fetching feed: %s", current.isoformat())
-        for line in fetch_feed(API_KEY, current):
-            try:
-                if line.get("type") != "file":
-                    continue
-
-                if "magic" not in line.get("attributes", {}) or "sha256" not in line.get("attributes", {}):
-                    continue
-
-                magic = line["attributes"]["magic"]
-                if any(map(lambda prefix: magic.startswith(prefix), ["PE32", "ELF", "MS-DOS", "Mach-O", "COM"])):
-                    print(line["attributes"]["sha256"])
-            except Exception as e:
-                logger.warning("error: %s", str(e), exc_info=True)
-                continue
+        for hash in fetch_feed_hashes(API_KEY, current):
+            print(hash)
 
         current += datetime.timedelta(minutes=1)
 
