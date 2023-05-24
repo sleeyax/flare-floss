@@ -480,6 +480,7 @@ def main():
         logging.error("%s does not exist", path)
         return 1
 
+    format: Literal["binary", "pe"] = "binary"
     with path.open("rb") as f:
         WHOLE_FILE = 0
 
@@ -510,12 +511,13 @@ def main():
                 # this is ok, we'll just process the file as raw binary
                 logger.debug("not a PE file")
             else:
+                format = "pe"
                 segments = compute_file_segments(pe)
                 structures = compute_file_structures(pe)
 
             # contains the file offsets of bytes that are part of recognized instructions.
             code_offsets = set()
-            if pe:
+            if format == "pe":
                 # lancelot only accepts bytes, not mmap
                 # TODO: fix bug during load of pma05-01
                 with timing("lancelot: load workspace"):
@@ -538,15 +540,17 @@ def main():
             # because the underlying mmap is closed.
             del pe
 
-    should_save_workspace = os.environ.get("FLOSS_SAVE_WORKSPACE") not in ("0", "no", "NO", "n", None)
-    with halo.Halo(
-        text="analyzing program ('slow' for now using vivisect)",
-        spinner="simpleDots",
-        stream=sys.stderr,
-        enabled=not args.quiet,
-    ):
-        vw = viv_utils.getWorkspace(args.path, should_save=should_save_workspace)
-        function_index = viv_utils.InstructionFunctionIndex(vw)
+    vw: Optional[vivisect.VivWorkspace] = None
+    if format == "pe":
+        should_save_workspace = os.environ.get("FLOSS_SAVE_WORKSPACE") not in ("0", "no", "NO", "n", None)
+        with halo.Halo(
+            text="analyzing program ('slow' for now using vivisect)",
+            spinner="simpleDots",
+            stream=sys.stderr,
+            enabled=not args.quiet,
+        ):
+            vw = viv_utils.getWorkspace(args.path, should_save=should_save_workspace)
+            function_index = viv_utils.InstructionFunctionIndex(vw)
 
     data_path = pathlib.Path(floss.qs.db.oss.__file__).parent / "data"
 
@@ -601,7 +605,7 @@ def main():
     for string in tagged_strings:
         key = string.string.string
 
-        if vw.getMeta("Format") == "pe":
+        if vw and vw.getMeta("Format") == "pe":
             # only supports fetching strings from PE files due to structure access.
             string.tags.update(check_is_code(vw, function_index, string.string))
 
