@@ -465,19 +465,7 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.quiet:
-        logging.basicConfig(level=logging.WARNING)
-        logging.getLogger().setLevel(logging.WARNING)
-        floss.main.set_log_config(args.debug, args.quiet)
-    elif args.debug:
-        logging.basicConfig(level=logging.DEBUG)
-        logging.getLogger().setLevel(logging.DEBUG)
-        floss.main.set_log_config(args.debug, args.quiet)
-    else:
-        logging.basicConfig(level=logging.INFO)
-        logging.getLogger().setLevel(logging.INFO)
-        floss.main.set_log_config(args.debug, args.quiet)
-
+    floss.main.set_log_config(args.debug, args.quiet)
     rich.traceback.install()
     sys.stdout.reconfigure(encoding='utf-8')
     colorama.just_fix_windows_console()
