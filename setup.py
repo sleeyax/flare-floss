@@ -14,7 +14,7 @@ requirements = [
     "tqdm==4.65.0",
     "networkx==2.5.1",
     "halo==0.0.31",
-    "rich==13.3.4",
+    "rich==13.3.5",
     "msgspec==0.14.2",
     "dnfile==0.13.0",
 ]
@@ -56,6 +56,10 @@ setuptools.setup(
     include_package_data=True,
     install_requires=requirements,
     extras_require={
+        "qs": [
+            "intervaltree==3.1.0",
+            "python-lancelot==0.8.6",
+        ],
         "dev": [
             "pyyaml==6.0",
             "pytest==7.3.1",
