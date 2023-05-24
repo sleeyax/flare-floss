@@ -57,7 +57,7 @@ setuptools.setup(
     install_requires=requirements,
     extras_require={
         "qs": [
-            "colorama==0.4.5",
+            "colorama==0.4.6",
             "intervaltree==3.1.0",
             "python-lancelot==0.8.6",
         ],
