@@ -69,6 +69,7 @@ import io
 import os
 import bz2
 import sys
+import gzip
 import json
 import shelve
 import hashlib
@@ -164,7 +165,7 @@ def _get_feed(api_key, type_, time, timeout=None):
         timeout (float, optional): The amount of time in seconds the request should wait before timing out.
 
     Returns:
-        StringIO: each line is a json string for one report
+        BytesIO: each line is a json string for one report
 
     vendored from: https://github.com/traceflow/virustotal3/blob/58dcfab/virustotal3/enterprise.py
     """
@@ -197,7 +198,7 @@ def file_feed(api_key, time, timeout=None):
         timeout (float, optional): The amount of time in seconds the request should wait before timing out.
 
     Returns:
-        StringIO: each line is a json string for one report
+        BytesIO: each line is a json string for one report
 
     vendored from: https://github.com/traceflow/virustotal3/blob/58dcfab/virustotal3/enterprise.py
     """
@@ -215,14 +216,14 @@ def fetch_feed(api_key: str, ts: datetime.datetime) -> Iterator[Any]:
     with shelve.open(str(p)) as db:
         if ts_key not in db:
             try:
-                db[ts_key] = file_feed(api_key, ts_key)
+                db[ts_key] = gzip.compress(file_feed(api_key, ts_key).read())
             except Exception as e:
                 logger.warning("error: %s", str(e), exc_info=True)
                 return
 
-        feed = db[ts_key]
+        feed = gzip.decompress(db[ts_key]).decode("utf-8")
 
-    for line in feed.read().decode("utf-8").split("\n"):
+    for line in feed.split("\n"):
         if not line:
             continue
         yield json.loads(line)
