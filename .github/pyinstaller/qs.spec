@@ -30,7 +30,12 @@ a = Analysis(
         # when invoking pyinstaller from the project root,
         # this gets invoked from the directory of the spec file,
         # i.e. ./.github/pyinstaller
-        ('../../floss/qs/db/data/', 'sigs'),
+        ('../../floss/qs/db/data/crt/*.jsonl.gz', 'floss/qs/db/data/crt'),
+        ('../../floss/qs/db/data/expert/*.jsonl', 'floss/qs/db/data/expert'),
+        ('../../floss/qs/db/data/gp/*.jsonl.gz', 'floss/qs/db/data/gp'),
+        ('../../floss/qs/db/data/gp/*.bin', 'floss/qs/db/data/gp'),
+        ('../../floss/qs/db/data/oss/*.jsonl.gz', 'floss/qs/db/data/oss'),
+        ('../../floss/qs/db/data/winapi/*.txt.gz', 'floss/qs/db/data/winapi'),
     ],
     hiddenimports=[],
     hookspath=[".github/pyinstaller/hooks"],
