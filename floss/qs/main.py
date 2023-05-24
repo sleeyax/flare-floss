@@ -13,6 +13,7 @@ from typing import Set, Dict, Union, Literal, Iterable, Optional, Sequence
 from dataclasses import dataclass
 
 import pefile
+import colorama
 import lancelot
 import vivisect
 import viv_utils
@@ -474,6 +475,7 @@ def main():
         logging.getLogger().setLevel(logging.INFO)
 
     rich.traceback.install()
+    colorama.just_fix_windows_console()
 
     path = pathlib.Path(args.path)
     if not path.exists():
