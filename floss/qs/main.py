@@ -475,6 +475,7 @@ def main():
         logging.getLogger().setLevel(logging.INFO)
 
     rich.traceback.install()
+    sys.stdout.reconfigure(encoding='utf-8')
     colorama.just_fix_windows_console()
 
     path = pathlib.Path(args.path)
