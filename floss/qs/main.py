@@ -16,10 +16,12 @@ import pefile
 import lancelot
 import viv_utils
 import intervaltree
+import rich.traceback
 from halo import halo
 from rich.text import Text
 from rich.style import Style
 from rich.console import Console
+
 
 import floss.qs.db.oss
 import floss.qs.db.winapi
@@ -468,6 +470,8 @@ def main():
     else:
         logging.basicConfig(level=logging.INFO)
         logging.getLogger().setLevel(logging.INFO)
+
+    rich.traceback.install()
 
     path = pathlib.Path(args.path)
     if not path.exists():
