@@ -24,6 +24,7 @@ from rich.text import Text
 from rich.style import Style
 from rich.console import Console
 
+import floss.main
 import floss.qs.db.oss
 import floss.qs.db.winapi
 from floss.qs.db.gp import StringHashDatabase, StringGlobalPrevalenceDatabase
@@ -467,12 +468,15 @@ def main():
     if args.quiet:
         logging.basicConfig(level=logging.WARNING)
         logging.getLogger().setLevel(logging.WARNING)
+        floss.main.set_log_config(args.debug, args.quiet)
     elif args.debug:
         logging.basicConfig(level=logging.DEBUG)
         logging.getLogger().setLevel(logging.DEBUG)
+        floss.main.set_log_config(args.debug, args.quiet)
     else:
         logging.basicConfig(level=logging.INFO)
         logging.getLogger().setLevel(logging.INFO)
+        floss.main.set_log_config(args.debug, args.quiet)
 
     rich.traceback.install()
     sys.stdout.reconfigure(encoding='utf-8')
@@ -518,16 +522,20 @@ def main():
                 segments = compute_file_segments(pe)
                 structures = compute_file_structures(pe)
 
+            ws: Optional[lancelot.Workspace] = None
             # contains the file offsets of bytes that are part of recognized instructions.
             code_offsets = set()
             if format == "pe":
                 # lancelot only accepts bytes, not mmap
                 # TODO: fix bug during load of pma05-01
                 with timing("lancelot: load workspace"):
-                    ws = lancelot.from_bytes(bytes(buf))
+                    try:
+                        ws = lancelot.from_bytes(bytes(buf))
+                    except ValueError as e:
+                        logger.warning("lancelot failed to load workspace: %s", e)
 
                 with timing("lancelot: find code"):
-                    if pe is not None and pe.OPTIONAL_HEADER is not None:
+                    if pe is not None and ws is not None and pe.OPTIONAL_HEADER is not None:
                         base_address = pe.OPTIONAL_HEADER.ImageBase
                         for function in ws.get_functions():
                             cfg = ws.build_cfg(function)
