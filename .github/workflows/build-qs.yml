@@ -3,8 +3,11 @@ name: build quantumstrand
 on:
   pull_request:
     branches: [ quantumstrand ]
+  push:
+    branches: [ quantumstrand ]
   release:
     types: [edited, published]
+    branches: [ quantumstrand ]
 
 jobs:
   build:
