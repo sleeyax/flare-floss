@@ -12,7 +12,8 @@ import argparse
 import datetime
 import collections
 import dataclasses
-from typing import List, Tuple
+from typing import List, Tuple, Mapping
+from collections.abc import Iterator
 
 import dnfile
 import pefile
@@ -52,7 +53,7 @@ def match(path: str, suffixes: Tuple[str, ...], prefixes: Tuple[str, ...]):
     return False
 
 
-def find_file_paths(path: str, suffixes: Tuple[str, ...] = None, prefixes: Tuple[str, ...] = None) -> List[str]:
+def find_file_paths(path: str, suffixes: Tuple[str, ...] = (), prefixes: Tuple[str, ...] = ()) -> Iterator[str]:
     if not os.path.exists(path):
         raise IOError(f"path {path} does not exist or cannot be accessed")
 
@@ -84,7 +85,7 @@ def extract_libs(dir_path: str, outdir: str, min_len: int, max_len: int):
         sorted_strings = sorted(filtered_strings, key=lambda s: (s.string, len(s.string)))
 
         outfile = os.path.join(outdir, f"{file_path.replace(os.sep, '--')}.json")
-        d = collections.defaultdict(lambda: collections.defaultdict(list))
+        d: Mapping[str, Mapping[str, List[str]]] = collections.defaultdict(lambda: collections.defaultdict(list))
         for s in sorted_strings:
             if s.string not in d[file_path][s.encoding]:
                 d[file_path][s.encoding.value].append(s.string)
@@ -115,7 +116,9 @@ def extract_pes(dir_path, outdir, min_len: int, max_len: int):
                 else:
                     # this doesn't work well for multiple extractions of the same data sources as data gets duplicated
                     # dedup is possible via the hashes though
-                    f, ext = os.path.splitext(outfile)
+                    #
+                    # ignoring type so that the f can alias over the file handle above
+                    f, ext = os.path.splitext(outfile)  # type: ignore
                     outfile = f"{f}{str(datetime.datetime.now().timestamp()).replace('.', '')}{ext}"
                     if os.path.exists(outfile):
                         logger.warning("skipping file with existing data: %s", file_path)
@@ -152,20 +155,27 @@ def extract_pes(dir_path, outdir, min_len: int, max_len: int):
         else:
             seen_hashes.add(sha256_hash)
 
+        filestrings = []
+        for s in filtered_strings:
+            encoding = s.encoding.value.lower()
+            assert isinstance(encoding, str)
+            assert encoding in ("ascii", "utf-16le", "unknown")
+
+            filestrings.append(
+                FileString(
+                    offset=s.offset,
+                    string=s.string,
+                    encoding=encoding,  # type: ignore
+                    location=get_section(s.offset, sections),
+                )
+            )
+
         pestrings = PeStrings(
             path=os.path.abspath(os.path.normpath(file_path)),
             sha256=sha256_hash,
             timestamp=datetime.datetime.now().isoformat(),
             dotnet=bool(dnpe.net),
-            strings=[
-                FileString(
-                    offset=s.offset,
-                    string=s.string,
-                    encoding=s.encoding.value.lower(),
-                    location=get_section(s.offset, sections),
-                )
-                for s in filtered_strings
-            ],
+            strings=filestrings,
         )
 
         with open(outfile, "w", encoding="utf-8") as f:
@@ -204,7 +214,7 @@ def main():
     parser.add_argument(
         "--pes",
         action="store_true",
-        help="recursively search and extract string from PE files under path, e.g., C:\Windows",
+        help="recursively search and extract string from PE files under path, e.g., C:\\Windows",
     )
     parser.add_argument("--min-len", type=int, default=MIN_LEN, help="minimum string length")
     parser.add_argument("--max-len", type=int, default=-1, help="maximum string length")

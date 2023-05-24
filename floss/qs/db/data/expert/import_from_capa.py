@@ -17,9 +17,14 @@ def walk_rule_logic(rule: capa.rules.Rule, node: capa.engine.Statement | capa.en
         case capa.features.common.Regex(name=type, value=value) | capa.features.common.Substring(
             name=type, value=value
         ) | capa.features.common.String(name=type, value=value):
+            # mypy doesn't seem to be very good at narrowing types here,
+            # maybe due to the use of `match` above?
+            assert type in ("regex", "substring", "string")  # type: ignore
+            assert isinstance(value, str)  # type: ignore
+
             yield ExpertRule(
-                type=type,
-                value=value,
+                type=type,  # type: ignore
+                value=value,  # type: ignore
                 tag="#capa",
                 action="highlight",
                 note=rule.name[:-33] if rule.is_subscope_rule() else rule.name,
@@ -30,7 +35,8 @@ def walk_rule_logic(rule: capa.rules.Rule, node: capa.engine.Statement | capa.en
         case capa.engine.And(children=[*children]) | capa.engine.Or(children=[*children]) | capa.engine.Some(
             children=[*children]
         ):
-            for child in children:
+            # children: List[Statement | Feature]
+            for child in children:  # type: ignore
                 yield from walk_rule_logic(rule, child)
         case capa.engine.Not(child=child) | capa.engine.Range(child=child):
             yield from walk_rule_logic(rule, child)

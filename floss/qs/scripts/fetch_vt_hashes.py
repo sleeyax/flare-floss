@@ -76,7 +76,7 @@ import logging
 import pathlib
 import argparse
 import datetime
-from typing import Any, List, Iterator
+from typing import Any, Iterator
 
 import requests
 import virustotal3.errors
@@ -97,7 +97,7 @@ def get_this_file_hash() -> str:
     return hash.hexdigest()
 
 
-def compute_cache_identifier(*keys: List[bytes]) -> CacheIdentifier:
+def compute_cache_identifier(*keys: bytes) -> CacheIdentifier:
     hash = hashlib.sha256()
 
     # so that if we change this file the cache is invalidated.
@@ -205,22 +205,22 @@ def file_feed(api_key, time, timeout=None):
 
 
 def fetch_feed(api_key: str, ts: datetime.datetime) -> Iterator[Any]:
-    ts = format_timestamp(ts)
+    ts_key = format_timestamp(ts)
 
     dir = pathlib.Path(get_default_cache_directory())
     name = compute_cache_identifier() + ".db"
 
     p = dir / name
 
-    with shelve.open(p) as db:
-        if ts not in db:
+    with shelve.open(str(p)) as db:
+        if ts_key not in db:
             try:
-                db[ts] = file_feed(api_key, ts)
+                db[ts_key] = file_feed(api_key, ts_key)
             except Exception as e:
                 logger.warning("error: %s", str(e), exc_info=True)
                 return
 
-        feed = db[ts]
+        feed = db[ts_key]
 
     for line in feed.read().decode("utf-8").split("\n"):
         if not line:

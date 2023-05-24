@@ -506,7 +506,7 @@ def main():
             structures: Sequence[Structure] = []
             try:
                 pe = pefile.PE(data=buf)
-            except pefile.PEFormatError as e:
+            except pefile.PEFormatError:
                 # this is ok, we'll just process the file as raw binary
                 logger.debug("not a PE file")
             else:

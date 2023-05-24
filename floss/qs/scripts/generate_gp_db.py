@@ -15,9 +15,9 @@ import json
 import logging
 import argparse
 import collections
-from typing import Tuple, Mapping
+from typing import Dict, Tuple
 
-from floss.qs.db.gp import StringGlobalPrevalence, StringGlobalPrevalenceDatabase
+from floss.qs.db.gp import Encoding, Location, StringGlobalPrevalence, StringGlobalPrevalenceDatabase
 from floss.qs.scripts.extract_strings import PeStrings
 
 MIN_COUNT = 500
@@ -32,7 +32,7 @@ def generate_gp_db(path: str, min_count: int, type_: str) -> "StringGlobalPreval
     if not os.path.isdir(path):
         raise IOError(f"path {path} is not a directory")
 
-    db: Mapping[Tuple[str, str, str], int] = collections.defaultdict(int)
+    db: Dict[Tuple[str, Encoding, Location], int] = collections.defaultdict(int)
     seen_hashes = set()
     nfiles = 0
     nstrings = 0
@@ -57,7 +57,7 @@ def generate_gp_db(path: str, min_count: int, type_: str) -> "StringGlobalPreval
 
                 nstrings += len(pestrings.strings)
                 for s in pestrings.strings:
-                    db[(s["string"], s["encoding"], s["location"])] += 1
+                    db[(s.string, s.encoding, s.location)] += 1
 
     print(f"scanned {nfiles:,} files with {nstrings:,} strings")
 

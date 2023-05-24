@@ -2,7 +2,7 @@ import gzip
 import hashlib
 import pathlib
 import datetime
-from typing import Set, Dict, List, Literal
+from typing import Set, Dict, List, Literal, Optional
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -48,7 +48,7 @@ class StringGlobalPrevalenceDatabase:
         self.metadata_by_string.update(other.metadata_by_string)
 
     @classmethod
-    def new_db(cls, note: str = None):
+    def new_db(cls, note: Optional[str] = None):
         return cls(
             meta=Metadata(timestamp=datetime.datetime.now().isoformat(), note=note),
             metadata_by_string=defaultdict(list),

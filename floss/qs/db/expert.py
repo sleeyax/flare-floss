@@ -1,6 +1,6 @@
 import re
 import pathlib
-from typing import Set, Dict, List, Literal
+from typing import Set, Dict, List, Tuple, Literal
 from dataclasses import dataclass
 
 import msgspec
@@ -23,7 +23,7 @@ class ExpertRule(msgspec.Struct):
 class ExpertStringDatabase:
     string_rules: Dict[str, ExpertRule]
     substring_rules: List[ExpertRule]
-    regex_rules: List[ExpertRule]
+    regex_rules: List[Tuple[ExpertRule, re.Pattern]]
 
     def __len__(self) -> int:
         return len(self.string_rules) + len(self.substring_rules) + len(self.regex_rules)
@@ -52,7 +52,7 @@ class ExpertStringDatabase:
     def from_file(cls, path: pathlib.Path) -> "ExpertStringDatabase":
         string_rules: Dict[str, ExpertRule] = {}
         substring_rules: List[ExpertRule] = []
-        regex_rules: List[(ExpertRule, re.Regex)] = []
+        regex_rules: List[Tuple[ExpertRule, re.Pattern]] = []
 
         decoder = msgspec.json.Decoder(type=ExpertRule)
         buf = path.read_bytes()
