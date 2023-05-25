@@ -1,5 +1,4 @@
 import io
-import os
 import re
 import sys
 import json
@@ -18,7 +17,6 @@ import colorama
 import lancelot
 import intervaltree
 import rich.traceback
-from halo import halo
 from rich.text import Text
 from rich.style import Style
 from rich.console import Console
@@ -629,7 +627,7 @@ def main():
             # I picked 5 as a reasonable threshold.
             # we could research what a better value is.
             #
-            # also note that large binaries with many strings have 
+            # also note that large binaries with many strings have
             # a higher chance of false positives, even with this threshold.
             # this is still a useful filter, though.
             for string in tagged_strings:
