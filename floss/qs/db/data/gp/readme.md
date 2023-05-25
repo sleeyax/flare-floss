@@ -47,5 +47,6 @@ The hash database format is a sorted list of eight byte truncated MD5 hashes of 
 
 Hash databases:
 
-  - xxa-hashes.bin: strings seen more than 100 times in 100,000 files uploaded to VirusTotal on May 1, 2023. There's probably a substantial bias in this collection. See issue #722 for the history.
+  - xaa-hashes.bin: strings seen more than 100 times in 100,000 files uploaded to VirusTotal on May 1, 2023. There's probably a substantial bias in this collection. See issue #722 for the history.
+  - yaa-hashes.bin: strings seen more than 100 times in 100,000 files uploaded to VirusTotal between May 18 and 24, 2023. The samples are randomly selected from more than 3 million total candidates in this time range. There's probably less bias in this collection (I hope). Also see issue #722 for the history.
 

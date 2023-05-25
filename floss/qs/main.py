@@ -588,7 +588,8 @@ def main():
     global_prevalence_database = StringGlobalPrevalenceDatabase.from_file(gp_path / "gp.jsonl.gz")
     global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path / "cwindb-native.jsonl.gz"))
     global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(gp_path / "cwindb-dotnet.jsonl.gz"))
-    global_prevalence_hash_database = StringHashDatabase.from_file(gp_path / "xaa-hashes.bin")
+    global_prevalence_hash_database_xaa = StringHashDatabase.from_file(gp_path / "xaa-hashes.bin")
+    global_prevalence_hash_database_yaa = StringHashDatabase.from_file(gp_path / "yaa-hashes.bin")
 
     def check_is_code2(code_offsets, string: ExtractedString):
         for addr in range(string.range.offset, string.range.end):
@@ -612,7 +613,8 @@ def main():
         string.tags.update(check_is_reloc(reloc_range, string.string))
 
         string.tags.update(query_global_prevalence_database(global_prevalence_database, key))
-        string.tags.update(query_global_prevalence_hash_database(global_prevalence_hash_database, key))
+        string.tags.update(query_global_prevalence_hash_database(global_prevalence_hash_database_xaa, key))
+        string.tags.update(query_global_prevalence_hash_database(global_prevalence_hash_database_yaa, key))
         string.tags.update(query_library_string_databases(library_databases, key))
         string.tags.update(query_expert_string_database(capa_expert_database, key))
         string.tags.update(query_winapi_name_database(winapi_database, key))
