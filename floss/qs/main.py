@@ -660,6 +660,12 @@ def main():
                 count += 1
 
         if 0 < count < 5:
+            # I picked 5 as a reasonable threshold.
+            # we could research what a better value is.
+            #
+            # also note that large binaries with many strings have 
+            # a higher chance of false positives, even with this threshold.
+            # this is still a useful filter, though.
             for string in tagged_strings:
                 if tagname in string.tags:
                     string.tags.remove(tagname)
