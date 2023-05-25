@@ -570,27 +570,28 @@ def main():
 
     capa_expert_database = ExpertStringDatabase.from_file(data_path / "expert" / "capa.jsonl")
 
+    oss_database_filenames = (
+        "brotli.jsonl.gz",
+        "bzip2.jsonl.gz",
+        "cryptopp.jsonl.gz",
+        "curl.jsonl.gz",
+        "detours.jsonl.gz",
+        "jemalloc.jsonl.gz",
+        "jsoncpp.jsonl.gz",
+        "kcp.jsonl.gz",
+        "liblzma.jsonl.gz",
+        "libsodium.jsonl.gz",
+        "libpcap.jsonl.gz",
+        "mbedtls.jsonl.gz",
+        "openssl.jsonl.gz",
+        "sqlite3.jsonl.gz",
+        "tomcrypt.jsonl.gz",
+        "wolfssl.jsonl.gz",
+        "zlib.jsonl.gz",
+    )
+
     library_databases = [
-        OpenSourceStringDatabase.from_file(data_path / "oss" / filename)
-        for filename in (
-            "brotli.jsonl.gz",
-            "bzip2.jsonl.gz",
-            "cryptopp.jsonl.gz",
-            "curl.jsonl.gz",
-            "detours.jsonl.gz",
-            "jemalloc.jsonl.gz",
-            "jsoncpp.jsonl.gz",
-            "kcp.jsonl.gz",
-            "liblzma.jsonl.gz",
-            "libsodium.jsonl.gz",
-            "libpcap.jsonl.gz",
-            "mbedtls.jsonl.gz",
-            "openssl.jsonl.gz",
-            "sqlite3.jsonl.gz",
-            "tomcrypt.jsonl.gz",
-            "wolfssl.jsonl.gz",
-            "zlib.jsonl.gz",
-        )
+        OpenSourceStringDatabase.from_file(data_path / "oss" / filename) for filename in oss_database_filenames
     ]
 
     library_databases.append(OpenSourceStringDatabase.from_file(data_path / "crt" / "msvc_v143.jsonl.gz"))
@@ -643,6 +644,25 @@ def main():
             structure: Structure = interval.data  # type: ignore
             string.structure = structure.name
             break
+
+    # open source libraries should have at least 5 strings,
+    # or don't show their tag, since the couple hits are probably false positives.
+    #
+    # hack: assume the libname is embedded in the filename.
+    # otherwise, we don't have an easy way to recover the library tag names.
+    for filename in oss_database_filenames:
+        libname = filename.partition(".")[0]
+        tagname = f"#{libname}"
+
+        count = 0
+        for string in tagged_strings:
+            if tagname in string.tags:
+                count += 1
+
+        if 0 < count < 5:
+            for string in tagged_strings:
+                if tagname in string.tags:
+                    string.tags.remove(tagname)
 
     console = Console()
     tag_rules: TagRules = {
