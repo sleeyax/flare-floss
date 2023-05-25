@@ -16,8 +16,6 @@ from dataclasses import dataclass
 import pefile
 import colorama
 import lancelot
-import vivisect
-import viv_utils
 import intervaltree
 import rich.traceback
 from halo import halo
@@ -291,22 +289,6 @@ def render_string(width: int, s: TaggedString, tag_rules: TagRules) -> Text:
     return line
 
 
-def check_is_code(
-    vw: vivisect.VivWorkspace, function_index: viv_utils.InstructionFunctionIndex, string: ExtractedString
-):
-    offset = string.range.offset
-    baseaddr = vw.parsedbin.IMAGE_NT_HEADERS.OptionalHeader.ImageBase
-    rva = vw.parsedbin.offsetToRva(offset) + baseaddr
-
-    try:
-        _ = function_index[rva]
-        return ("#code",)
-    except KeyError:
-        pass
-
-    return ()
-
-
 def get_reloc_range(pe: pefile.PE) -> Optional[Range]:
     directory_index = pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_BASERELOC"]
 
@@ -552,18 +534,6 @@ def main():
             # because the underlying mmap is closed.
             del pe
 
-    vw: Optional[vivisect.VivWorkspace] = None
-    if format == "pe":
-        should_save_workspace = os.environ.get("FLOSS_SAVE_WORKSPACE") not in ("0", "no", "NO", "n", None)
-        with halo.Halo(
-            text="analyzing program ('slow' for now using vivisect)",
-            spinner="simpleDots",
-            stream=sys.stderr,
-            enabled=not args.quiet,
-        ):
-            vw = viv_utils.getWorkspace(args.path, should_save=should_save_workspace)
-            function_index = viv_utils.InstructionFunctionIndex(vw)
-
     data_path = pathlib.Path(floss.qs.db.oss.__file__).parent / "data"
 
     winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(data_path / "winapi")
@@ -618,10 +588,6 @@ def main():
 
     for string in tagged_strings:
         key = string.string.string
-
-        if vw and vw.getMeta("Format") == "pe":
-            # only supports fetching strings from PE files due to structure access.
-            string.tags.update(check_is_code(vw, function_index, string.string))
 
         string.tags.update(check_is_code2(code_offsets, string.string))
         string.tags.update(check_is_reloc(reloc_range, string.string))
