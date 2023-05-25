@@ -448,7 +448,7 @@ def main():
 
     floss.main.set_log_config(args.debug, args.quiet)
     rich.traceback.install()
-    if isinstance(sys.stdout, io.TextIOWrapper):
+    if isinstance(sys.stdout, io.TextIOWrapper) or hasattr(sys.stdout, "reconfigure"):
         # from sys.stdout type hint:
         #
         # TextIO is used instead of more specific types for the standard streams,
@@ -678,14 +678,14 @@ def main():
             console.print(header)
 
             for string in strings_in_segment:
-                s = render_string(console.width, string, tag_rules)
-                if s:
+                if not should_hide_string(string, tag_rules):
+                    s = render_string(console.width, string, tag_rules)
                     console.print(s)
 
     else:
         for string in tagged_strings:
-            s = render_string(console.width, string, tag_rules)
-            if s:
+            if not should_hide_string(string, tag_rules):
+                s = render_string(console.width, string, tag_rules)
                 console.print(s)
 
     return 0
