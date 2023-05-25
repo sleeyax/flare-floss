@@ -655,10 +655,6 @@ def main():
             if len(strings_in_segment) == 0:
                 continue
 
-            # TODO: if all strings in the section are hidden,
-            # such as the reloc section in PMA 03-02,
-            # then don't show the section either.
-
             if segment.type == "section":
                 try:
                     assert segment.section is not None
