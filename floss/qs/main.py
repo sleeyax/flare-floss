@@ -509,6 +509,7 @@ def main():
             if format == "pe":
                 # lancelot only accepts bytes, not mmap
                 # TODO: fix bug during load of pma05-01
+                # fixed in https://github.com/williballenthin/lancelot/issues/185
                 with timing("lancelot: load workspace"):
                     try:
                         ws = lancelot.from_bytes(bytes(buf))
@@ -573,10 +574,10 @@ def main():
     global_prevalence_hash_database_xaa = StringHashDatabase.from_file(gp_path / "xaa-hashes.bin")
     global_prevalence_hash_database_yaa = StringHashDatabase.from_file(gp_path / "yaa-hashes.bin")
 
-    def check_is_code2(code_offsets, string: ExtractedString):
+    def check_is_code(code_offsets, string: ExtractedString):
         for addr in range(string.range.offset, string.range.end):
             if addr in code_offsets:
-                return ("#code2",)
+                return ("#code",)
 
         return ()
 
@@ -587,7 +588,7 @@ def main():
     for string in tagged_strings:
         key = string.string.string
 
-        string.tags.update(check_is_code2(code_offsets, string.string))
+        string.tags.update(check_is_code(code_offsets, string.string))
         string.tags.update(check_is_reloc(reloc_range, string.string))
 
         string.tags.update(query_global_prevalence_database(global_prevalence_database, key))
@@ -636,7 +637,7 @@ def main():
 
     console = Console()
     tag_rules: TagRules = {
-        # "#code": "hide",
+        "#code": "hide",
         "#reloc": "hide",
         "#common": "mute",
         "#zlib": "mute",
