@@ -69,7 +69,6 @@ import io
 import os
 import bz2
 import sys
-import gzip
 import json
 import shelve
 import hashlib
@@ -77,7 +76,7 @@ import logging
 import pathlib
 import argparse
 import datetime
-from typing import Any, Iterator, List
+from typing import Any, List, Iterator
 
 import requests
 import virustotal3.errors
@@ -211,7 +210,7 @@ def fetch_feed(api_key: str, ts: datetime.datetime) -> Iterator[Any]:
         if not line:
             continue
         yield json.loads(line)
- 
+
 
 def fetch_feed_hashes(api_key: str, ts: datetime.datetime) -> List[str]:
     ts_key = format_timestamp(ts)
@@ -234,19 +233,21 @@ def fetch_feed_hashes(api_key: str, ts: datetime.datetime) -> List[str]:
                             continue
 
                         magic = line["attributes"]["magic"]
-                        if any(map(lambda prefix: magic.startswith(prefix), ["PE32", "ELF", "MS-DOS", "Mach-O", "COM"])):
+                        if any(
+                            map(lambda prefix: magic.startswith(prefix), ["PE32", "ELF", "MS-DOS", "Mach-O", "COM"])
+                        ):
                             hashes.append(line["attributes"]["sha256"])
                     except Exception as e:
                         logger.warning("error: %s", str(e), exc_info=True)
                         continue
-                 
+
                 db[ts_key] = hashes
             except Exception as e:
                 logger.warning("error: %s", str(e), exc_info=True)
                 return []
 
         return db[ts_key]
- 
+
 
 def main():
     parser = argparse.ArgumentParser(

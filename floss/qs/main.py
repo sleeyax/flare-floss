@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import sys
@@ -467,7 +468,19 @@ def main():
 
     floss.main.set_log_config(args.debug, args.quiet)
     rich.traceback.install()
-    sys.stdout.reconfigure(encoding='utf-8')
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        # from sys.stdout type hint:
+        #
+        # TextIO is used instead of more specific types for the standard streams,
+        # since they are often monkeypatched at runtime. At startup, the objects
+        # are initialized to instances of TextIOWrapper.
+        #
+        # To use methods from TextIOWrapper, use an isinstance check to ensure that
+        # the streams have not been overridden:
+        #
+        # if isinstance(sys.stdout, io.TextIOWrapper):
+        #    sys.stdout.reconfigure(...)
+        sys.stdout.reconfigure(encoding="utf-8")
     colorama.just_fix_windows_console()
 
     path = pathlib.Path(args.path)
