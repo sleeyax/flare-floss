@@ -1,3 +1,4 @@
+import abc
 import io
 import re
 import sys
@@ -9,8 +10,8 @@ import pathlib
 import argparse
 import itertools
 import contextlib
-from typing import Set, Dict, Union, Literal, Iterable, Optional, Sequence
-from dataclasses import dataclass
+from typing import Any, Set, Dict, Union, Literal, Iterable, Optional, Sequence
+from dataclasses import dataclass, field
 
 import pefile
 import colorama
@@ -355,43 +356,180 @@ def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Seq
 
 
 @dataclass
-class Segment:
+class Layout(abc.ABC):
     range: Range
-    type: Literal["segment"] | Literal["section"]
-    section: Optional[pefile.SectionStructure] = None
+
+    # human readable name
+    name: str
+
+    # ordered by address
+    # non-overlapping
+    # may not cover the entire range (non-contiguous)
+    children: Sequence["Layout"]
+
+    parent: Optional["Layout"]
+
+    @property
+    def predecessor(self) -> Optional["Layout"]:
+        """ traverse to the prior sibling """
+        if self.parent is None:
+            return None
+
+        index = self.parent.children.index(self)
+        if index == 0:
+            return None
+
+        return self.parent.children[index - 1]
+
+    @property
+    def successor(self) -> Optional["Layout"]:
+        """ traverse to the next sibling """
+        if self.parent is None:
+            return None
+
+        index = self.parent.children.index(self)
+        if index == len(self.parent.children) - 1:
+            return None
+
+        return self.parent.children[index + 1]
 
 
-def compute_file_segments(pe: pefile.PE) -> Sequence[Segment]:
-    regions = []
+
+@dataclass
+class PELayout(Layout):
+    pass
+
+
+@dataclass
+class SectionLayout(Layout):
+    section: pefile.SectionStructure
+
+
+@dataclass
+class SegmentLayout(Layout):
+    pass
+
+
+@dataclass
+class ResourceLayout(Layout):
+    buf: bytes
+
+
+def compute_pe_layout(pe: pefile.PE, pe_offset: int) -> Layout:
+    layout = PELayout(
+        range=Range(0, len(pe.__data__)),
+        name="pe",
+        children=[],
+        parent=None,
+    )
 
     for section in sorted(pe.sections, key=lambda s: s.PointerToRawData):
         if section.SizeOfRawData == 0:
             continue
-        regions.append(Segment(Range(section.get_PointerToRawData_adj(), section.SizeOfRawData), "section", section))
+
+        try:
+            name = section.Name.partition(b"\x00")[0].decode("utf-8")
+        except UnicodeDecodeError:
+            name = "(invalid)"
+
+        layout.children.append(SectionLayout(
+            range=Range(pe_offset + section.get_PointerToRawData_adj(), section.SizeOfRawData),
+            name=name,
+            children=[],
+            parent=layout,
+            section=section
+        ))
 
     # segment that contains all data until the first section
-    regions.insert(0, Segment(Range(0, regions[0].range.offset), "segment"))
+    layout.children.insert(0, SegmentLayout(
+        range=Range(pe_offset + 0, layout.children[0].range.offset - (pe_offset + 0)), 
+        name="PE header",
+        children=[],
+        parent=layout,
+    ))
 
     # segment that contains all data after the last section
     # aka. "overlay"
-    last_section: Segment = regions[-1]
+    last_section: Layout = layout.children[-1]
     if pe.__data__ is not None:
         buf = pe.__data__
-        if last_section.range.end < len(buf):
-            regions.append(Segment(Range(last_section.range.end, len(buf) - last_section.range.end), "segment"))
+        if last_section.range.end < pe_offset + len(buf):
+            layout.children.append(SegmentLayout(
+                range=Range(pe_offset + last_section.range.end, len(buf) - last_section.range.end), 
+                name="PE overlay",
+                children=[],
+                parent=layout,
+            ))
 
     # add segments for any gaps between sections.
     # note that we append new items to the end of the list and then resort,
     # to avoid mutating the list while we're iterating over it.
-    for i in range(1, len(regions)):
-        prior: Segment = regions[i - 1]
-        region: Segment = regions[i]
+    for i in range(1, len(layout.children)):
+        prior: Layout = layout.children[i - 1]
+        region: Layout = layout.children[i]
 
         if prior.range.end != region.range.offset:
-            regions.append(Segment(Range(prior.range.end, region.range.offset - prior.range.end), "segment"))
-    regions.sort(key=lambda s: s.range.offset)
+            layout.children.append(SegmentLayout(
+                range=Range(pe_offset + prior.range.end, region.range.offset - prior.range.end),
+                name="gap",
+                children=[],
+                parent=layout,
+            ))
 
-    return regions
+    layout.children.sort(key=lambda s: s.range.offset)
+
+    if hasattr(pe, "DIRECTORY_ENTRY_RESOURCE"):
+
+        def walk_resources(dir_data: pefile.ResourceDirData, path: Sequence[str] = ()):
+            resources = []
+            for entry in dir_data.entries:
+                if entry.name:
+                    name = str(entry.name)
+                else:
+                    name = str(entry.id)
+
+                epath = path + (name,)
+
+                if hasattr(entry, "directory"):
+                    resources.extend(walk_resources(entry.directory, epath))
+
+                else:
+                    try:
+                        buf = pe.get_data(entry.data.struct.OffsetToData, entry.data.struct.Size)
+                    except pefile.PEFormatError:
+                        continue
+                    else:
+                        logger.debug("resource: %s, size: 0x%x", "/".join(epath), len(buf))
+                        pass
+
+                    resources.append(ResourceLayout(
+                        range=Range(pe_offset + entry.data.struct.OffsetToData, entry.data.struct.Size),
+                        name="rsrc: " + "/".join(epath),
+                        children=[],
+                        # fixed up later when inserted into container
+                        parent=None,
+                        buf=buf,
+                    ))
+
+            return resources
+
+        resources = walk_resources(pe.DIRECTORY_ENTRY_RESOURCE)
+        resources.sort(key=lambda r: r.range.offset)
+
+        for resource in resources:
+            if resource.buf.startswith(b"MZ"):
+                child_pe = pefile.PE(data=resource.buf)
+                resource.children.append(
+                    compute_pe_layout(child_pe, resource.range.offset)
+                )
+
+        for resource in resources:
+            container = next(filter(lambda l: l.range.offset <= resource.range.offset < l.range.end, layout.children))
+            resource.parent = container
+            container.children.append(resource)
+            container.children.sort(key=lambda l: l.range.offset)
+
+    return layout
 
 
 @dataclass
@@ -491,7 +629,7 @@ def main():
             )
 
             pe: Optional[pefile.PE] = None
-            segments: Sequence[Segment] = []
+            layout: Layout = SegmentLayout(range=Range(0, len(buf)), name="binary", children=[], parent=None)
             structures: Sequence[Structure] = []
             try:
                 pe = pefile.PE(data=buf)
@@ -500,7 +638,7 @@ def main():
                 logger.debug("not a PE file")
             else:
                 format = "pe"
-                segments = compute_file_segments(pe)
+                layout = compute_pe_layout(pe, 0)
                 structures = compute_file_structures(pe)
 
             ws: Optional[lancelot.Workspace] = None
@@ -635,7 +773,6 @@ def main():
                 if tagname in string.tags:
                     string.tags.remove(tagname)
 
-    console = Console()
     tag_rules: TagRules = {
         "#code": "hide",
         "#reloc": "hide",
@@ -648,31 +785,136 @@ def main():
         "#capa": "highlight",
     }
 
+    tagged_strings = list(filter(lambda s: not should_hide_string(s, tag_rules), tagged_strings))
+
+    def render_layout_strings(layout: Layout, strings: Sequence[TaggedString], width: int, depth: int = 0):
+
+        if isinstance(layout, PELayout) and not layout.predecessor and not layout.successor:
+            for child in layout.children:
+                render_layout_strings(child, strings, width, depth)
+            return
+
+        strings_in_range = list(filter(lambda s: layout.range.offset <= s.string.range.offset < layout.range.end, strings))
+
+        if not strings_in_range:
+            # don't render sections with no strings
+            return
+
+        BORDER_STYLE = Style(color="grey50")
+
+        header = Span(layout.name, style=BORDER_STYLE)
+        header.pad(1)
+        header.align("center", width=console.width, character="━")
+
+        # box is muted color
+        # name of section is blue
+        name_offset = header.plain.index(" ") + 1
+        header.stylize(Style(color="blue"), name_offset, name_offset + len(layout.name))
+
+        for _ in range(depth):
+            header.remove_suffix("━")
+
+        header.remove_suffix("━")
+
+        header_shape = "┫"
+        if not layout.predecessor:
+            header_shape = "┓"
+        else:
+            # annoying to duplicate this logic here.
+            # refactor is probably needed.
+            predecessor = layout.predecessor
+            strings_in_prev_range = list(filter(lambda s: predecessor.range.offset <= s.string.range.offset < predecessor.range.end, strings))
+
+            if not strings_in_prev_range:
+                header_shape = "┓"
+            else:
+                header_shape = "┫"
+        header.append_text(Span(header_shape, style=BORDER_STYLE))
+
+        for _ in range(depth):
+            header.append_text(Span("┃", style=BORDER_STYLE))
+
+        console.print(header)
+
+        if layout.children:
+            for i, child in enumerate(layout.children):
+                # this is not efficient, rescanning the entire list, but optimize later.
+                # this most clearly describes what we're trying to do.
+                #
+                # an optimization: since we know the strings are sorted,
+                # we can keep track of the last string we saw, and quickly slice
+                # the list of candidate strings, rather than scanning from the start again.
+                if i == 0:
+                    strings_before_child = list(filter(lambda s: layout.range.offset <= s.string.range.offset < child.range.offset, strings_in_range))
+                else:
+                    last_child = layout.children[i - 1]
+                    strings_before_child = list(filter(lambda s: last_child.range.end < s.string.range.offset < child.range.offset, strings_in_range))
+
+                if strings_before_child:
+                    for string in strings_before_child[:4]:
+                        line = render_string(console.width, string, tag_rules)
+                        # TODO: this truncates the structure column
+                        line = line[:-depth - 1]
+                        for _ in range(depth + 1):
+                            line.append_text(Span("┃", style=BORDER_STYLE))
+                        console.print(line)
+
+                render_layout_strings(child, strings_in_range, width, depth + 1)
+
+            strings_after_children = list(filter(lambda s: child.range.end < s.string.range.offset < layout.range.end, strings_in_range))
+            if strings_after_children:
+                for string in strings_after_children[:4]:
+                    line = render_string(console.width, string, tag_rules)
+                    # TODO: this truncates the structure column
+                    line = line[:-depth - 1]
+                    for _ in range(depth + 1):
+                        line.append_text(Span("┃", style=BORDER_STYLE))
+                    console.print(line)
+
+        else:
+            for string in strings_in_range[:4]:
+                line = render_string(console.width, string, tag_rules)
+                # TODO: this truncates the structure column
+                line = line[:-depth - 1]
+                for _ in range(depth + 1):
+                    line.append_text(Span("┃", style=BORDER_STYLE))
+                console.print(line)
+
+        should_print_footer = False
+        if not layout.successor:
+            should_print_footer = True
+        else:
+            # annoying to duplicate this logic here.
+            # refactor is probably needed.
+            successor = layout.successor
+            strings_in_next_range = list(filter(lambda s: successor.range.offset <= s.string.range.offset < successor.range.end, strings))
+
+            if not strings_in_next_range:
+                should_print_footer = True
+
+        if should_print_footer:
+            footer = Span("", style=BORDER_STYLE)
+            footer.align("center", width=console.width, character="━")
+
+            for _ in range(depth):
+                footer.remove_suffix("━")
+
+            footer.remove_suffix("━")
+            footer.append_text(Span("┛", style=BORDER_STYLE))
+
+            for _ in range(depth):
+                footer.append_text(Span("┃", style=BORDER_STYLE))
+
+            console.print(footer)
+
+    console = Console()
+    render_layout_strings(layout, tagged_strings, 80)
+
+    return 0
+
+
     if segments:
         for i, segment in enumerate(segments):
-            strings_in_segment = list(filter(lambda s: s.string.range.offset in segment.range, tagged_strings))
-            strings_in_segment = list(filter(lambda s: not should_hide_string(s, tag_rules), strings_in_segment))
-
-            if len(strings_in_segment) == 0:
-                continue
-
-            if segment.type == "section":
-                try:
-                    assert segment.section is not None
-                    assert isinstance(segment.section, pefile.SectionStructure)
-                    key = segment.section.Name.partition(b"\x00")[0].decode("utf-8")
-                except UnicodeDecodeError:
-                    key = "(invalid)"
-            elif segment.type == "segment":
-                if i == 0:
-                    key = "header"
-                elif i == len(segments) - 1:
-                    key = "overlay"
-                else:
-                    key = f"gap ({i - 1})"
-            else:
-                raise NotImplementedError(segment.type)
-
             header = Span(key, style=Style(color="blue"))
             header.pad(1)
             header.align("center", width=console.width, character="━")
