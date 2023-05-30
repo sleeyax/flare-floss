@@ -1,6 +1,6 @@
-import abc
 import io
 import re
+import abc
 import sys
 import json
 import time
@@ -10,8 +10,8 @@ import pathlib
 import argparse
 import itertools
 import contextlib
-from typing import Any, Callable, List, Set, Dict, Union, Literal, Iterable, Optional, Sequence
-from dataclasses import dataclass, field
+from typing import Set, Dict, List, Tuple, Union, Literal, Callable, Iterable, Optional, Sequence
+from dataclasses import field, dataclass
 
 import pefile
 import colorama
@@ -98,7 +98,7 @@ class Slice:
         return Slice(self.buf, self.range.slice(offset, size))
 
     @classmethod
-    def from_bytes(cls, buf: bytes) -> "Range":
+    def from_bytes(cls, buf: bytes) -> "Slice":
         return cls(buf, Range(0, len(buf)))
 
     def __repr__(self):
@@ -154,11 +154,7 @@ def extract_ascii_strings(slice: Slice, n: int = MIN_STR_LEN) -> Iterable[Extrac
         offset = match.start()
         length = match.end() - match.start()
         string = match.group().decode("ascii")
-        yield ExtractedString(
-            string=string, 
-            slice=slice.slice(offset, length), 
-            encoding="ascii"
-        )
+        yield ExtractedString(string=string, slice=slice.slice(offset, length), encoding="ascii")
 
 
 def extract_unicode_strings(slice: Slice, n: int = MIN_STR_LEN) -> Iterable[ExtractedString]:
@@ -177,17 +173,13 @@ def extract_unicode_strings(slice: Slice, n: int = MIN_STR_LEN) -> Iterable[Extr
     for match in r.finditer(slice.data):
         offset = match.start()
         length = match.end() - match.start()
-        
+
         try:
             string = match.group().decode("utf-16")
         except UnicodeDecodeError:
             continue
 
-        yield ExtractedString(
-            string=string, 
-            slice=slice.slice(offset, length),
-            encoding="unicode"
-        )
+        yield ExtractedString(string=string, slice=slice.slice(offset, length), encoding="unicode")
 
 
 def extract_strings(slice: Slice, n: int = MIN_STR_LEN) -> Iterable[ExtractedString]:
@@ -366,7 +358,7 @@ def render_string(width: int, s: TaggedString, tag_rules: TagRules) -> Text:
 
 
 def get_reloc_offsets(slice: Slice, pe: pefile.PE) -> Set[int]:
-    ret = set()
+    ret: Set[int] = set()
 
     directory_index = pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_BASERELOC"]
 
@@ -444,7 +436,7 @@ def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Seq
     return ()
 
 
-Tagger = Callable[[TaggedString], Sequence[Tag]]
+Tagger = Callable[[ExtractedString], Sequence[Tag]]
 
 OSS_DATABASE_FILENAMES = (
     "brotli.jsonl.gz",
@@ -489,14 +481,11 @@ def load_databases() -> Sequence[Tagger]:
         ret.append(capa_expert_database_tagger)
 
     if True:
-
-
         library_databases = [
             OpenSourceStringDatabase.from_file(data_path / "oss" / filename) for filename in OSS_DATABASE_FILENAMES
         ]
 
         library_databases.append(OpenSourceStringDatabase.from_file(data_path / "crt" / "msvc_v143.jsonl.gz"))
-
 
         def library_databases_tagger(s: ExtractedString) -> Sequence[Tag]:
             return query_library_string_databases(library_databases, s.string)
@@ -505,8 +494,12 @@ def load_databases() -> Sequence[Tagger]:
 
     if True:
         global_prevalence_database = StringGlobalPrevalenceDatabase.from_file(data_path / "gp" / "gp.jsonl.gz")
-        global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(data_path / "gp" / "cwindb-native.jsonl.gz"))
-        global_prevalence_database.update(StringGlobalPrevalenceDatabase.from_file(data_path / "gp" / "cwindb-dotnet.jsonl.gz"))
+        global_prevalence_database.update(
+            StringGlobalPrevalenceDatabase.from_file(data_path / "gp" / "cwindb-native.jsonl.gz")
+        )
+        global_prevalence_database.update(
+            StringGlobalPrevalenceDatabase.from_file(data_path / "gp" / "cwindb-dotnet.jsonl.gz")
+        )
 
         def global_prevalence_database_tagger(s: ExtractedString) -> Sequence[Tag]:
             return query_global_prevalence_database(global_prevalence_database, s.string)
@@ -552,8 +545,8 @@ class Layout(abc.ABC):
     strings: List[TaggedString] = field(init=False, default_factory=list)
 
     @property
-    def predecessors(self) -> Optional["Layout"]:
-        """ traverse to the prior siblings` """
+    def predecessors(self) -> Iterable["Layout"]:
+        """traverse to the prior siblings`"""
         if self.parent is None:
             return None
 
@@ -566,12 +559,12 @@ class Layout(abc.ABC):
 
     @property
     def predecessor(self) -> Optional["Layout"]:
-        """ traverse to the prior sibling """
-        return next(self.predecessors, None)
+        """traverse to the prior sibling"""
+        return next(iter(self.predecessors), None)
 
     @property
-    def successors(self) -> Optional["Layout"]:
-        """ traverse to the next siblings """
+    def successors(self) -> Iterable["Layout"]:
+        """traverse to the next siblings"""
         if self.parent is None:
             return None
 
@@ -584,11 +577,13 @@ class Layout(abc.ABC):
 
     @property
     def successor(self) -> Optional["Layout"]:
-        """ traverse to the next sibling """
-        return next(self.successors, None)
+        """traverse to the next sibling"""
+        return next(iter(self.successors), None)
 
     def add_child(self, child: "Layout"):
-        bisect.insort(self.children, child, key=lambda c: c.slice.range.offset)
+        # this works in py3.11, though mypy gets confused,
+        # maybe due to the use of the key function.
+        bisect.insort(self.children, child, key=lambda c: c.slice.range.offset)  # type: ignore
         child.parent = self
 
     @property
@@ -600,17 +595,20 @@ class Layout(abc.ABC):
         return self.slice.range.end
 
     def tag_strings(self, taggers: Sequence[Tagger]):
-        """ 
+        """
         tag the strings in this layout and its children, recursively.
         this means that the .strings field will contain TaggedStrings now
-        (it used to contain ExtractedStrings). 
+        (it used to contain ExtractedStrings).
 
         this can be overridden, if a subclass has more ways of tagging strings,
         such as a PE file and code/reloc regions.
         """
-        tagged_strings = []
+        tagged_strings: List[TaggedString] = []
         for string in self.strings:
-            tags = set()
+            # at this moment, the list of strings contains only ExtractedStrings.
+            # this routine will transform them into TaggedStrings.
+            assert isinstance(string, ExtractedString)
+            tags: Set[Tag] = set()
 
             for tagger in taggers:
                 tags.update(tagger(string))
@@ -631,7 +629,6 @@ class PELayout(Layout):
     code_offsets: Set[int]
 
     def tag_strings(self, taggers: Sequence[Tagger]):
-
         def check_is_reloc_tagger(s: ExtractedString) -> Sequence[Tag]:
             return check_is_reloc(self.reloc_offsets, s)
 
@@ -653,7 +650,8 @@ class SectionLayout(Layout):
 
 @dataclass
 class SegmentLayout(Layout):
-    """ region not covered by any section """
+    """region not covered by any section"""
+
     pass
 
 
@@ -675,10 +673,12 @@ def compute_file_structures(slice: Slice, pe: pefile.PE) -> Sequence[Structure]:
         offset = section.get_file_offset()
         size = section.sizeof()
 
-        structures.append(Structure(
-            slice=slice.slice(offset, size), 
-            name="section header",
-        ))
+        structures.append(
+            Structure(
+                slice=slice.slice(offset, size),
+                name="section header",
+            )
+        )
 
     if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
         for dll in pe.DIRECTORY_ENTRY_IMPORT:
@@ -691,10 +691,12 @@ def compute_file_structures(slice: Slice, pe: pefile.PE) -> Sequence[Structure]:
             size = len(dll_name)
             offset = pe.get_offset_from_rva(rva)
 
-            structures.append(Structure(
-                slice=slice.slice(offset, size),
-                name="import table",
-            ))
+            structures.append(
+                Structure(
+                    slice=slice.slice(offset, size),
+                    name="import table",
+                )
+            )
 
             for entry in dll.imports:
                 if entry.name is None:
@@ -711,10 +713,12 @@ def compute_file_structures(slice: Slice, pe: pefile.PE) -> Sequence[Structure]:
                 offset = entry.name_offset
                 size = len(symbol_name)
 
-                structures.append(Structure(
-                    slice=slice.slice(offset, size),
-                    name="import table",
-                ))
+                structures.append(
+                    Structure(
+                        slice=slice.slice(offset, size),
+                        name="import table",
+                    )
+                )
 
     # TODO: other structures
 
@@ -776,19 +780,17 @@ def compute_pe_layout(slice: Slice) -> Layout:
 
         offset = section.get_PointerToRawData_adj()
         size = section.SizeOfRawData
-        layout.add_child(SectionLayout(
-            slice=slice.slice(offset, size),
-            name=name,
-            section=section
-        ))
+        layout.add_child(SectionLayout(slice=slice.slice(offset, size), name=name, section=section))
 
     # segment that contains all data until the first section
     offset = 0
     size = layout.children[0].offset - slice.range.offset
-    layout.add_child(SegmentLayout(
-        slice=slice.slice(offset, size),
-        name="header",
-    ))
+    layout.add_child(
+        SegmentLayout(
+            slice=slice.slice(offset, size),
+            name="header",
+        )
+    )
 
     # segment that contains all data after the last section
     # aka. "overlay"
@@ -796,10 +798,12 @@ def compute_pe_layout(slice: Slice) -> Layout:
     if last_section.end < layout.end:
         offset = last_section.end
         size = layout.end - last_section.end
-        layout.add_child(SegmentLayout(
-            slice=slice.slice(offset, size),
-            name="overlay",
-        ))
+        layout.add_child(
+            SegmentLayout(
+                slice=slice.slice(offset, size),
+                name="overlay",
+            )
+        )
 
     # add segments for any gaps between sections.
     # note that we append new items to the end of the list and then resort,
@@ -811,15 +815,17 @@ def compute_pe_layout(slice: Slice) -> Layout:
         if prior.end != current.offset:
             offset = prior.end
             size = current.offset - prior.end
-            layout.add_child(SegmentLayout(
-                slice=slice.slice(offset, size),
-                name="gap",
-            ))
+            layout.add_child(
+                SegmentLayout(
+                    slice=slice.slice(offset, size),
+                    name="gap",
+                )
+            )
 
     if hasattr(pe, "DIRECTORY_ENTRY_RESOURCE"):
 
-        def collect_pe_resources(dir_data: pefile.ResourceDirData, path: Sequence[str] = ()) -> Sequence[Layout]:
-            resources = []
+        def collect_pe_resources(dir_data: pefile.ResourceDirData, path: Tuple[str, ...] = ()) -> Sequence[Layout]:
+            resources: List[Layout] = []
             for entry in dir_data.entries:
                 if entry.name:
                     name = str(entry.name)
@@ -838,10 +844,12 @@ def compute_pe_layout(slice: Slice) -> Layout:
 
                     logger.debug("resource: %s, size: 0x%x", "/".join(epath), size)
 
-                    resources.append(ResourceLayout(
-                        slice=slice.slice(offset, size),
-                        name="rsrc: " + "/".join(epath),
-                    ))
+                    resources.append(
+                        ResourceLayout(
+                            slice=slice.slice(offset, size),
+                            name="rsrc: " + "/".join(epath),
+                        )
+                    )
 
             return resources
 
@@ -853,7 +861,9 @@ def compute_pe_layout(slice: Slice) -> Layout:
 
         for resource in resources:
             # place resources into their parent section, usually .rsrc
-            container = next(filter(lambda l: l.offset <= resource.offset < l.end, layout.children))
+            container = next(
+                filter(lambda candidate: candidate.offset <= resource.offset < candidate.end, layout.children)
+            )
             container.add_child(resource)
 
     return layout
@@ -874,7 +884,10 @@ def compute_layout(slice: Slice) -> Layout:
 def extract_layout_strings(layout: Layout):
     if not layout.children:
         # all the strings are found in this slice directly.
-        layout.strings = extract_strings(layout.slice)
+
+        # at this moment, layout.strings contains only ExtractedStrings
+        # after layout.tag_strings, it will contain TaggedStrings.
+        layout.strings = extract_strings(layout.slice)  # type: ignore
         return
 
     else:
@@ -898,7 +911,10 @@ def extract_layout_strings(layout: Layout):
                 continue
 
             gap = layout.slice.slice(offset, size)
-            layout.strings.extend(extract_strings(gap))
+
+            # at this moment, layout.strings contains only ExtractedStrings
+            # after layout.tag_strings, it will contain TaggedStrings.
+            layout.strings.extend(extract_strings(gap))  # type: ignore
 
         # finally, find strings after the last child
         last_child = layout.children[-1]
@@ -907,7 +923,9 @@ def extract_layout_strings(layout: Layout):
 
         if size > 0:
             gap = layout.slice.slice(offset, size)
-            layout.strings.extend(extract_strings(gap))
+            # at this moment, layout.strings contains only ExtractedStrings
+            # after layout.tag_strings, it will contain TaggedStrings.
+            layout.strings.extend(extract_strings(gap))  # type: ignore
 
         # now recurse to find the strings in the children.
         for child in layout.children:
@@ -980,7 +998,9 @@ def has_visible_successors(layout: Layout) -> bool:
     return any(map(is_visible, layout.successors))
 
 
-def render_strings(console: Console, layout: Layout, tag_rules: TagRules, depth: int = 0, name_hint: Optional[str] = None):
+def render_strings(
+    console: Console, layout: Layout, tag_rules: TagRules, depth: int = 0, name_hint: Optional[str] = None
+):
     if not is_visible(layout):
         return
 
@@ -989,7 +1009,7 @@ def render_strings(console: Console, layout: Layout, tag_rules: TagRules, depth:
         # then we can directly render the child,
         # retaining just a hint of the parent's name.
         #
-        # for example: 
+        # for example:
         #
         #     rsrc: BINARY/102/0 (pe)
         return render_strings(console, layout.children[0], tag_rules, depth, name_hint=layout.name)
@@ -1023,7 +1043,7 @@ def render_strings(console: Console, layout: Layout, tag_rules: TagRules, depth:
     def render_string_line(console: Console, tag_rules: TagRules, string: TaggedString, depth: int):
         line = render_string(console.width, string, tag_rules)
         # TODO: this truncates the structure column
-        line = line[:-depth - 1]
+        line = line[: -depth - 1]
         line.append_text(Span("┃" * (depth + 1), style=BORDER_STYLE))
         console.print(line)
 
@@ -1115,7 +1135,7 @@ def main():
     # build the layout tree that describes the structures and ranges of the file.
     layout = compute_pe_layout(slice)
 
-    # recursively populate the `.strings: List[ExtractedString]` field of each layout node. 
+    # recursively populate the `.strings: List[ExtractedString]` field of each layout node.
     extract_layout_strings(layout)
 
     # recursively apply tags to the strings in the layout tree.
@@ -1142,6 +1162,7 @@ def main():
     render_strings(console, layout, tag_rules)
 
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
