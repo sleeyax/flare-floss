@@ -16,7 +16,6 @@ from dataclasses import field, dataclass
 import pefile
 import colorama
 import lancelot
-import intervaltree
 import rich.traceback
 from rich.text import Text
 from rich.style import Style
@@ -196,7 +195,7 @@ def Span(text: str, style: Style = DEFAULT_STYLE) -> Text:
 
 PADDING_WIDTH = 2
 OFFSET_WIDTH = 8
-STRUCTURE_WIDTH = 16
+STRUCTURE_WIDTH = 20
 
 
 def render_string_padding():
@@ -291,8 +290,9 @@ def render_string_structure(s: TaggedString):
     ret = Text()
 
     if s.structure:
-        structure = Span("/" + s.structure, style=MUTED_STYLE)
-        structure.align("left", STRUCTURE_WIDTH)
+        structure = Span(s.structure, style=Style(color="blue"))
+        structure.align("left", STRUCTURE_WIDTH - 1)
+        ret.append(Span("/", style=MUTED_STYLE))
         ret.append(structure)
     else:
         ret.append_text(Span(" " * STRUCTURE_WIDTH))
@@ -529,6 +529,74 @@ def load_databases() -> Sequence[Tagger]:
 
 
 @dataclass
+class Structure:
+    slice: Slice
+    name: str
+
+
+def collect_pe_structures(slice: Slice, pe: pefile.PE) -> Sequence[Structure]:
+    structures = []
+
+    for section in sorted(pe.sections, key=lambda s: s.PointerToRawData):
+        offset = section.get_file_offset()
+        size = section.sizeof()
+
+        structures.append(
+            Structure(
+                slice=slice.slice(offset, size),
+                name="section header",
+            )
+        )
+
+    if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
+        for dll in pe.DIRECTORY_ENTRY_IMPORT:
+            try:
+                dll_name = dll.dll.decode("ascii")
+            except UnicodeDecodeError:
+                continue
+
+            rva = dll.struct.Name
+            size = len(dll_name)
+            offset = pe.get_offset_from_rva(rva)
+
+            structures.append(
+                Structure(
+                    slice=slice.slice(offset, size),
+                    name="import table",
+                )
+            )
+
+            for entry in dll.imports:
+                if entry.name is None:
+                    continue
+
+                if entry.name_offset is None:
+                    continue
+
+                try:
+                    symbol_name = entry.name.decode("ascii")
+                except UnicodeDecodeError:
+                    continue
+
+                offset = entry.name_offset
+                size = len(symbol_name)
+
+                structures.append(
+                    Structure(
+                        slice=slice.slice(offset, size),
+                        name="import table",
+                    )
+                )
+
+    # TODO: other structures
+    # export table
+    # certificate data
+    # rich header
+
+    return structures
+
+
+@dataclass
 class Layout(abc.ABC):
     """
     recursively describe a region of a data, as a tree.
@@ -551,6 +619,7 @@ class Layout(abc.ABC):
     such as a PE file, a section, a segment, or a resource.
     subclasses can provide more specific behavior when it comes to tagging strings.
     """
+
     slice: Slice
 
     # human readable name
@@ -645,6 +714,37 @@ class Layout(abc.ABC):
         for child in self.children:
             child.tag_strings(taggers)
 
+    def mark_structures(self, structures: Optional[Tuple[Dict[int, Structure], ...]] = (), **kwargs):
+        """
+        mark the structures that might be associated with each string, recursively.
+        this means that the TaggedStrings may now have a non-empty .structure field.
+
+        this can be overridden, if a subclass has a way of parsing structures,
+        such as a PE file and all its data.
+        """
+        if structures:
+            for string in self.strings:
+                for structures_by_address in structures:
+                    structure = structures_by_address.get(string.offset)
+                    if structure:
+                        string.structure = structure.name
+                        break
+
+        for child in self.children:
+            child.mark_structures(structures=structures, **kwargs)
+
+
+@dataclass
+class SectionLayout(Layout):
+    section: pefile.SectionStructure
+
+
+@dataclass
+class SegmentLayout(Layout):
+    """region not covered by any section, such as PE header or overlay"""
+
+    pass
+
 
 @dataclass
 class PELayout(Layout):
@@ -653,6 +753,8 @@ class PELayout(Layout):
 
     # file offsets of bytes that are recognized as code
     code_offsets: Set[int]
+
+    structures_by_address: Dict[int, Structure]
 
     def tag_strings(self, taggers: Sequence[Tagger]):
         def check_is_reloc_tagger(s: ExtractedString) -> Sequence[Tag]:
@@ -668,86 +770,21 @@ class PELayout(Layout):
 
         super().tag_strings(taggers)
 
-
-@dataclass
-class SectionLayout(Layout):
-    section: pefile.SectionStructure
-
-
-@dataclass
-class SegmentLayout(Layout):
-    """region not covered by any section, such as PE header or overlay"""
-    pass
+    def mark_structures(self, structures=(), **kwargs):
+        for child in self.children:
+            if isinstance(child, (SectionLayout, SegmentLayout)):
+                # expected child of a PE
+                child.mark_structures(structures=structures + (self.structures_by_address,), **kwargs)
+            else:
+                # unexpected child of a PE
+                # maybe like a resource or overlay, etc.
+                # which is fine - but we don't expect it to know about the PE structures.
+                child.mark_structures(structures=structures, **kwargs)
 
 
 @dataclass
 class ResourceLayout(Layout):
     pass
-
-
-@dataclass
-class Structure:
-    slice: Slice
-    name: str
-
-
-def compute_file_structures(slice: Slice, pe: pefile.PE) -> Sequence[Structure]:
-    structures = []
-
-    for section in sorted(pe.sections, key=lambda s: s.PointerToRawData):
-        offset = section.get_file_offset()
-        size = section.sizeof()
-
-        structures.append(
-            Structure(
-                slice=slice.slice(offset, size),
-                name="section header",
-            )
-        )
-
-    if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
-        for dll in pe.DIRECTORY_ENTRY_IMPORT:
-            try:
-                dll_name = dll.dll.decode("ascii")
-            except UnicodeDecodeError:
-                continue
-
-            rva = dll.struct.Name
-            size = len(dll_name)
-            offset = pe.get_offset_from_rva(rva)
-
-            structures.append(
-                Structure(
-                    slice=slice.slice(offset, size),
-                    name="import table",
-                )
-            )
-
-            for entry in dll.imports:
-                if entry.name is None:
-                    continue
-
-                if entry.name_offset is None:
-                    continue
-
-                try:
-                    symbol_name = entry.name.decode("ascii")
-                except UnicodeDecodeError:
-                    continue
-
-                offset = entry.name_offset
-                size = len(symbol_name)
-
-                structures.append(
-                    Structure(
-                        slice=slice.slice(offset, size),
-                        name="import table",
-                    )
-                )
-
-    # TODO: other structures
-
-    return structures
 
 
 def compute_pe_layout(slice: Slice) -> Layout:
@@ -758,12 +795,13 @@ def compute_pe_layout(slice: Slice) -> Layout:
     except pefile.PEFormatError as e:
         raise ValueError("pefile failed to load workspace") from e
 
-    structures = compute_file_structures(slice, pe)
+    structures = collect_pe_structures(slice, pe)
     reloc_offsets = get_reloc_offsets(slice, pe)
 
-    structures_by_range = intervaltree.IntervalTree()
-    for interval in structures:
-        structures_by_range.addi(interval.slice.range.offset, interval.slice.range.end, interval)
+    structures_by_address = {}
+    for structure in structures:
+        for offset in structure.slice.range:
+            structures_by_address[offset] = structure
 
     # lancelot only accepts bytes, not mmap
     with timing("lancelot: load workspace"):
@@ -792,6 +830,7 @@ def compute_pe_layout(slice: Slice) -> Layout:
         name="pe",
         reloc_offsets=reloc_offsets,
         code_offsets=code_offsets,
+        structures_by_address=structures_by_address,
     )
 
     for section in pe.sections:
@@ -1168,7 +1207,7 @@ def main():
     taggers = load_databases()
     layout.tag_strings(taggers)
 
-    # TODO: figure out how to mark structures
+    layout.mark_structures()
 
     # remove tags from libraries that have too few matches (five, by default).
     remove_false_positive_lib_strings(layout)
