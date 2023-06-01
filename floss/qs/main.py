@@ -282,7 +282,7 @@ def render_string_offset(s: TaggedString):
 
     offset = Span("")
     offset.append_text(Span("0" * padding_width, style=MUTED_STYLE))
-    offset.append_text(Span(unpadded, style=Style(color="blue")))
+    offset.append_text(Span(unpadded, style=DEFAULT_STYLE))
 
     return offset
 
