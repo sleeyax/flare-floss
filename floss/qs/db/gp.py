@@ -2,11 +2,13 @@ import gzip
 import hashlib
 import pathlib
 import datetime
-from typing import Set, Dict, List, Literal, Optional
+from typing import Set, Dict, List, Literal, Optional, Sequence
 from collections import defaultdict
 from dataclasses import dataclass
 
 import msgspec
+
+import floss.qs.db
 
 Encoding = Literal["ascii"] | Literal["utf-16le"] | Literal["unknown"]
 # header | gap | overlay
@@ -121,3 +123,21 @@ class StringHashDatabase:
         return cls(
             string_hashes=string_hashes,
         )
+
+
+DEFAULT_PATHS = (
+    pathlib.Path(floss.qs.db.__file__).parent / "data" / "gp" / "gp.jsonl.gz",
+    pathlib.Path(floss.qs.db.__file__).parent / "data" / "gp" / "cwindb-native.jsonl.gz",
+    pathlib.Path(floss.qs.db.__file__).parent / "data" / "gp" / "cwindb-dotnet.jsonl.gz",
+    pathlib.Path(floss.qs.db.__file__).parent / "data" / "gp" / "xaa-hashes.bin",
+    pathlib.Path(floss.qs.db.__file__).parent / "data" / "gp" / "yaa-hashes.bin",
+)
+
+
+def get_default_databases() -> Sequence[StringGlobalPrevalenceDatabase | StringHashDatabase]:
+    return [
+        StringGlobalPrevalenceDatabase.from_file(path)
+        if path.name.endswith(".jsonl.gz")
+        else StringHashDatabase.from_file(path)
+        for path in DEFAULT_PATHS
+    ]

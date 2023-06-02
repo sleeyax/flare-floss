@@ -1,9 +1,11 @@
 import re
 import pathlib
-from typing import Set, Dict, List, Tuple, Literal
+from typing import Set, Dict, List, Tuple, Literal, Sequence
 from dataclasses import dataclass
 
 import msgspec
+
+import floss.qs.db
 
 
 class ExpertRule(msgspec.Struct):
@@ -78,3 +80,10 @@ class ExpertStringDatabase:
             substring_rules=substring_rules,
             regex_rules=regex_rules,
         )
+
+
+DEFAULT_PATHS = (pathlib.Path(floss.qs.db.__file__).parent / "data" / "expert" / "capa.jsonl",)
+
+
+def get_default_databases() -> Sequence[ExpertStringDatabase]:
+    return [ExpertStringDatabase.from_file(path) for path in DEFAULT_PATHS]

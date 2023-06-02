@@ -1,9 +1,11 @@
 import gzip
 import pathlib
-from typing import Dict
+from typing import Dict, Sequence
 from dataclasses import dataclass
 
 import msgspec
+
+import floss.qs.db
 
 
 class OpenSourceString(msgspec.Struct):
@@ -33,3 +35,32 @@ class OpenSourceStringDatabase:
             metadata_by_string[s.string] = s
 
         return cls(metadata_by_string=metadata_by_string)
+
+
+DEFAULT_FILENAMES = (
+    "brotli.jsonl.gz",
+    "bzip2.jsonl.gz",
+    "cryptopp.jsonl.gz",
+    "curl.jsonl.gz",
+    "detours.jsonl.gz",
+    "jemalloc.jsonl.gz",
+    "jsoncpp.jsonl.gz",
+    "kcp.jsonl.gz",
+    "liblzma.jsonl.gz",
+    "libsodium.jsonl.gz",
+    "libpcap.jsonl.gz",
+    "mbedtls.jsonl.gz",
+    "openssl.jsonl.gz",
+    "sqlite3.jsonl.gz",
+    "tomcrypt.jsonl.gz",
+    "wolfssl.jsonl.gz",
+    "zlib.jsonl.gz",
+)
+
+DEFAULT_PATHS = tuple(
+    pathlib.Path(floss.qs.db.__file__).parent / "data" / "oss" / filename for filename in DEFAULT_FILENAMES
+) + (pathlib.Path(floss.qs.db.__file__).parent / "data" / "crt" / "msvc_v143.jsonl.gz",)
+
+
+def get_default_databases() -> Sequence[OpenSourceStringDatabase]:
+    return [OpenSourceStringDatabase.from_file(path) for path in DEFAULT_PATHS]

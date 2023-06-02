@@ -2,7 +2,6 @@ import pathlib
 
 import floss.qs.db.gp
 
-
 CD = pathlib.Path(__file__).parent
 
 
@@ -22,8 +21,8 @@ def test_query_db():
     s = res[0]
 
     assert s is not None
-    assert s.string == '!This program cannot be run in DOS mode.'
-    assert s.encoding == 'ascii'
+    assert s.string == "!This program cannot be run in DOS mode."
+    assert s.encoding == "ascii"
     assert s.global_count == 424466
     assert s.location == None
 

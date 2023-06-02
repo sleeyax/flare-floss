@@ -8,6 +8,7 @@ import bisect
 import logging
 import pathlib
 import argparse
+import functools
 import itertools
 import contextlib
 from typing import Set, Dict, List, Tuple, Literal, Callable, Iterable, Optional, Sequence
@@ -22,7 +23,9 @@ from rich.style import Style
 from rich.console import Console
 
 import floss.main
+import floss.qs.db.gp
 import floss.qs.db.oss
+import floss.qs.db.expert
 import floss.qs.db.winapi
 from floss.qs.db.gp import StringHashDatabase, StringGlobalPrevalenceDatabase
 from floss.qs.db.oss import OpenSourceStringDatabase
@@ -403,16 +406,12 @@ def query_global_prevalence_hash_database(db: StringHashDatabase, string: str):
     return ()
 
 
-def query_library_string_databases(dbs: Sequence[OpenSourceStringDatabase], string: str) -> Sequence[Tag]:
-    tags = set()
-    for db in dbs:
-        meta = db.metadata_by_string.get(string)
-        if not meta:
-            continue
+def query_library_string_database(db: OpenSourceStringDatabase, string: str) -> Sequence[Tag]:
+    meta = db.metadata_by_string.get(string)
+    if not meta:
+        return ()
 
-        tags.add(f"#{meta.library_name}")
-
-    return tuple(tags)
+    return (f"#{meta.library_name}",)
 
 
 def query_expert_string_database(db: ExpertStringDatabase, string: str) -> Sequence[Tag]:
@@ -431,99 +430,32 @@ def query_winapi_name_database(db: WindowsApiStringDatabase, string: str) -> Seq
 
 Tagger = Callable[[ExtractedString], Sequence[Tag]]
 
-OSS_DATABASE_FILENAMES = (
-    "brotli.jsonl.gz",
-    "bzip2.jsonl.gz",
-    "cryptopp.jsonl.gz",
-    "curl.jsonl.gz",
-    "detours.jsonl.gz",
-    "jemalloc.jsonl.gz",
-    "jsoncpp.jsonl.gz",
-    "kcp.jsonl.gz",
-    "liblzma.jsonl.gz",
-    "libsodium.jsonl.gz",
-    "libpcap.jsonl.gz",
-    "mbedtls.jsonl.gz",
-    "openssl.jsonl.gz",
-    "sqlite3.jsonl.gz",
-    "tomcrypt.jsonl.gz",
-    "wolfssl.jsonl.gz",
-    "zlib.jsonl.gz",
-)
-
 
 def load_databases() -> Sequence[Tagger]:
     ret = []
 
-    data_path = pathlib.Path(floss.qs.db.oss.__file__).parent / "data"
+    def query_database(db, queryfn, string: ExtractedString):
+        return queryfn(db, string.string)
 
-    # below i use a `if True` blocks to delineate the different databases.
-    # these could be functions, at the expense of more visual noise.
-    # note that each one creates a closure over the database object.
+    def make_tagger(db, queryfn) -> Sequence[Tag]:
+        return functools.partial(query_database, db, queryfn)
 
-    if True:
-        winapi_database = floss.qs.db.winapi.WindowsApiStringDatabase.from_dir(data_path / "winapi")
+    for db in floss.qs.db.winapi.get_default_databases():
+        ret.append(make_tagger(db, query_winapi_name_database))
 
-        # note closure over winapi_database
-        def winapi_database_tagger(s: ExtractedString) -> Sequence[Tag]:
-            return query_winapi_name_database(winapi_database, s.string)
+    for db in floss.qs.db.expert.get_default_databases():
+        ret.append(make_tagger(db, query_expert_string_database))
 
-        ret.append(winapi_database_tagger)
+    for db in floss.qs.db.oss.get_default_databases():
+        ret.append(make_tagger(db, query_library_string_database))
 
-    if True:
-        capa_expert_database = ExpertStringDatabase.from_file(data_path / "expert" / "capa.jsonl")
-
-        # note closure over capa_expert_database
-        def capa_expert_database_tagger(s: ExtractedString) -> Sequence[Tag]:
-            return query_expert_string_database(capa_expert_database, s.string)
-
-        ret.append(capa_expert_database_tagger)
-
-    if True:
-        library_databases = [
-            OpenSourceStringDatabase.from_file(data_path / "oss" / filename) for filename in OSS_DATABASE_FILENAMES
-        ]
-
-        library_databases.append(OpenSourceStringDatabase.from_file(data_path / "crt" / "msvc_v143.jsonl.gz"))
-
-        # note closure over library_databases
-        def library_databases_tagger(s: ExtractedString) -> Sequence[Tag]:
-            return query_library_string_databases(library_databases, s.string)
-
-        ret.append(library_databases_tagger)
-
-    if True:
-        global_prevalence_database = StringGlobalPrevalenceDatabase.from_file(data_path / "gp" / "gp.jsonl.gz")
-        global_prevalence_database.update(
-            StringGlobalPrevalenceDatabase.from_file(data_path / "gp" / "cwindb-native.jsonl.gz")
-        )
-        global_prevalence_database.update(
-            StringGlobalPrevalenceDatabase.from_file(data_path / "gp" / "cwindb-dotnet.jsonl.gz")
-        )
-
-        # note closure over global_prevalence_database
-        def global_prevalence_database_tagger(s: ExtractedString) -> Sequence[Tag]:
-            return query_global_prevalence_database(global_prevalence_database, s.string)
-
-        ret.append(global_prevalence_database_tagger)
-
-    if True:
-        global_prevalence_hash_database_xaa = StringHashDatabase.from_file(data_path / "gp" / "xaa-hashes.bin")
-
-        # note closure over global_prevalence_hash_database_xaa
-        def global_prevalence_hash_database_xaa_tagger(s: ExtractedString) -> Sequence[Tag]:
-            return query_global_prevalence_hash_database(global_prevalence_hash_database_xaa, s.string)
-
-        ret.append(global_prevalence_hash_database_xaa_tagger)
-
-    if True:
-        global_prevalence_hash_database_yaa = StringHashDatabase.from_file(data_path / "gp" / "yaa-hashes.bin")
-
-        # note closure over global_prevalence_hash_database_yaa
-        def global_prevalence_hash_database_yaa_tagger(s: ExtractedString) -> Sequence[Tag]:
-            return query_global_prevalence_hash_database(global_prevalence_hash_database_yaa, s.string)
-
-        ret.append(global_prevalence_hash_database_yaa_tagger)
+    for db in floss.qs.db.gp.get_default_databases():
+        if isinstance(db, StringGlobalPrevalenceDatabase):
+            ret.append(make_tagger(db, query_global_prevalence_database))
+        elif isinstance(db, StringHashDatabase):
+            ret.append(make_tagger(db, query_global_prevalence_hash_database))
+        else:
+            raise ValueError(f"unexpected database type: {type(db)}")
 
     return ret
 
@@ -1017,7 +949,7 @@ def remove_false_positive_lib_strings(layout: Layout):
     #
     # hack: assume the libname is embedded in the filename.
     # otherwise, we don't have an easy way to recover the library tag names.
-    for filename in OSS_DATABASE_FILENAMES:
+    for filename in floss.qs.db.oss.DEFAULT_FILENAMES:
         libname = filename.partition(".")[0]
         tagname = f"#{libname}"
 
