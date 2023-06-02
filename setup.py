@@ -59,6 +59,7 @@ setuptools.setup(
         "qs": [
             "colorama==0.4.6",
             "python-lancelot==0.8.6",
+            "textual==0.27.0",
         ],
         "dev": [
             "pyyaml==6.0",
