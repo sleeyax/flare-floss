@@ -10,8 +10,9 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.binding import Binding
-from textual.widgets import Label, Footer, Static, TabPane, TabbedContent
+from textual.widgets import Label, Footer, Static, TabPane, TabbedContent, Input
 from textual.widgets import ListView, ListItem, Label, Footer
+from textual.containers import Horizontal, Vertical
 
 import floss.qs.db.expert
 import floss.qs.db.gp
@@ -81,6 +82,8 @@ class OSSDatabaseView(VerticalScroll):
             ret.append_text(Text(f"function_name: {self.metadata.function_name}\n"))
             ret.append_text(Text(f"line_number: {self.metadata.line_number}\n"))
 
+            # TODO: add action to delete
+
             return ret
 
     class StringsView(VerticalScroll):
@@ -90,14 +93,16 @@ class OSSDatabaseView(VerticalScroll):
             self.add_class("dbedit--pane")
 
         def compose(self):
+            # we use text here because 10k widgets is really slow with textual
             ret = Text(no_wrap=True, overflow="ellipsis")
 
             for metadata in self.strings:
+                # TODO: highlight the currently selected row
                 ret.append(render_string(metadata.string) + "\n")
 
-            yield Static(
-                ret
-            )
+            yield Static(Text("strings:\n", style=Style(color="blue")))
+
+            yield Static(ret)
 
         class StringSelected(Message):
             def __init__(self, string: floss.qs.db.oss.OpenSourceString) -> None:
@@ -105,15 +110,29 @@ class OSSDatabaseView(VerticalScroll):
                 super().__init__()
 
         def on_click(self, event):
+            # TODO: bug in that click on the strings: title is handled here.
+            # we should ignore that, maybe by inspecting the parent widget.
             string = self.strings[event.y]
             event.stop()
-            print(f"clicked: {string.string}")
+
             self.post_message(self.StringSelected(string))
 
     def compose(self):
-        yield Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}", style=Style(color="blue")), classes="dbedit--pane")
+        v = Vertical(
+            Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}", style=Style(color="blue"))),
+            Static(""),
+            Input(placeholder="filter..."),
+            classes="dbedit--pane"
+        )
+        v.styles.height = 7
+        yield v
+
         yield self.StringsView(self.strings)
-        yield self.StringMetadataView(self.strings[0])
+
+        m = self.StringMetadataView(self.strings[0])
+        m.styles.height = 10
+        yield m
+        # TODO: add action to add string
 
     def on_strings_view_string_selected(self, ev) -> None:
         self.query_one("StringMetadataView").remove()
@@ -229,7 +248,6 @@ class MainScreen(Screen):
             super().__init__(*args, **kwargs)
 
     def compose(self) -> ComposeResult:
-        from textual.containers import Horizontal
 
         first_descriptor = self.database_descriptors[0]
         first_database = self.databases[str(first_descriptor.path.absolute)]
