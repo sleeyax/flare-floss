@@ -1129,7 +1129,7 @@ def main():
     slice = Slice.from_bytes(buf)
 
     # build the layout tree that describes the structures and ranges of the file.
-    layout = compute_pe_layout(slice)
+    layout = compute_layout(slice)
 
     # recursively populate the `.strings: List[ExtractedString]` field of each layout node.
     extract_layout_strings(layout)
