@@ -802,11 +802,11 @@ def compute_pe_layout(slice: Slice) -> Layout:
 
     # the "overlay" may contain Authenticode digital signatures
     security = pe.OPTIONAL_HEADER.DATA_DIRECTORY[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']]
-    if security.VirtualAddress and security.Size:
+    if security.VirtualAddress and security.Size - 1 > 0:
         last_section: Layout = layout.children[-1]
         last_section.add_child(
             SegmentLayout(
-                slice=slice.slice(security.VirtualAddress, security.Size),
+                slice=slice.slice(security.VirtualAddress, security.Size - 1),
                 name="Authenticode digital signature",
             )
         )
