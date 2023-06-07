@@ -337,6 +337,8 @@ def render_string(width: int, s: TaggedString, tag_rules: TagRules) -> Text:
     right.append_text(render_string_padding())
     right.append_text(render_string_tags(s, tag_rules))
     right.append_text(render_string_padding())
+    # indicate encoding: ascii implicit default
+    right.append_text(Span("U " if s.string.encoding == "unicode" else "  "))
     right.append_text(render_string_offset(s))
     right.append_text(render_string_structure(s))
 
