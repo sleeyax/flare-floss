@@ -32,12 +32,8 @@ class WindowsApiStringDatabase:
         return cls(dll_names=dll_names, api_names=api_names)
 
 
-DEFAULT_PATHS = (
-    pathlib.Path(floss.qs.db.__file__).parent / "data" / "winapi",
-)
+DEFAULT_PATHS = (pathlib.Path(floss.qs.db.__file__).parent / "data" / "winapi",)
 
 
 def get_default_databases() -> Sequence[WindowsApiStringDatabase]:
-    return [
-        WindowsApiStringDatabase.from_dir(path) for path in DEFAULT_PATHS
-    ]
+    return [WindowsApiStringDatabase.from_dir(path) for path in DEFAULT_PATHS]
