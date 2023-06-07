@@ -1,4 +1,5 @@
 import gzip
+import logging
 import pathlib
 from typing import Dict, Sequence
 from dataclasses import dataclass
@@ -6,6 +7,8 @@ from dataclasses import dataclass
 import msgspec
 
 import floss.qs.db
+
+logger = logging.getLogger(__name__)
 
 
 class OpenSourceString(msgspec.Struct):
@@ -35,6 +38,16 @@ class OpenSourceStringDatabase:
             metadata_by_string[s.string] = s
 
         return cls(metadata_by_string=metadata_by_string)
+
+    def to_file(self, path: pathlib.Path):
+        encoder = msgspec.json.Encoder()
+
+        lines = []
+        for s in sorted(self.metadata_by_string.values(), key=lambda s: s.string):
+            lines.append(encoder.encode(s))
+
+        path.write_bytes(gzip.compress(b"\n".join(lines)))
+        logger.debug("wrote %d strings to %s", len(lines), path)
 
 
 DEFAULT_FILENAMES = (
