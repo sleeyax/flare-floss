@@ -3,27 +3,25 @@ import asyncio
 import logging
 import pathlib
 import textwrap
-from typing import Any, Set, List, Tuple, Literal, Mapping, Callable, Iterable, Optional, Sequence, Dict
+from typing import Any, Set, Dict, List, Tuple, Literal, Mapping, Callable, Iterable, Optional, Sequence
 from dataclasses import dataclass
 
+import rich.console
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.binding import Binding
-from textual.widgets import Label, Footer, Static, TabPane, TabbedContent, Input
-from textual.widgets import ListView, ListItem, Label, Footer
-from textual.containers import Horizontal, Vertical
+from textual.widgets import Input, Label, Footer, Static, TabPane, ListItem, ListView, TabbedContent
+from textual.containers import Vertical, Horizontal
 
-import floss.qs.db.expert
 import floss.qs.db.gp
-import floss.qs.db.winapi
 import floss.qs.db.oss
-from floss.qs.db.expert import ExpertStringDatabase
-from floss.qs.db.gp import StringGlobalPrevalenceDatabase
-from floss.qs.db.gp import StringHashDatabase 
-from floss.qs.db.winapi import WindowsApiStringDatabase
+import floss.qs.db.expert
+import floss.qs.db.winapi
+from floss.qs.db.gp import StringHashDatabase, StringGlobalPrevalenceDatabase
 from floss.qs.db.oss import OpenSourceStringDatabase
-
+from floss.qs.db.expert import ExpertStringDatabase
+from floss.qs.db.winapi import WindowsApiStringDatabase
 
 logger = logging.getLogger("floss.qs.dbedit")
 
@@ -34,21 +32,29 @@ class DatabaseDescriptor:
     path: pathlib.Path
 
 
-Database = ExpertStringDatabase | StringGlobalPrevalenceDatabase | StringHashDatabase | WindowsApiStringDatabase | OpenSourceStringDatabase
+Database = (
+    ExpertStringDatabase
+    | StringGlobalPrevalenceDatabase
+    | StringHashDatabase
+    | WindowsApiStringDatabase
+    | OpenSourceStringDatabase
+)
 
-
-from textual.reactive import reactive
-from textual.scroll_view import ScrollView
-from textual.containers import VerticalScroll
 
 from rich.text import Text
 from rich.style import Style
+from rich.table import Table
+from textual.reactive import reactive
+from textual.containers import VerticalScroll
+from textual.scroll_view import ScrollView
 
 
 def render_string(s: str):
     return json.dumps(s)[1:-1]
 
+
 from textual.message import Message
+
 
 class OSSDatabaseView(VerticalScroll):
     DEFAULT_CSS = """
@@ -75,12 +81,36 @@ class OSSDatabaseView(VerticalScroll):
             ret.append_text(Text("metadata:\n", style=Style(color="blue")))
             ret.append_text(Text("\n"))
 
-            ret.append_text(Text(f"string: {render_string(self.metadata.string)}\n"))
-            ret.append_text(Text(f"library_name: {self.metadata.library_name}\n"))
-            ret.append_text(Text(f"library_version: {self.metadata.library_version}\n"))
-            ret.append_text(Text(f"file_path: {self.metadata.file_path}\n"))
-            ret.append_text(Text(f"function_name: {self.metadata.function_name}\n"))
-            ret.append_text(Text(f"line_number: {self.metadata.line_number}\n"))
+            table = Table(
+                title="metadata:",
+                show_header=False,
+                show_lines=False,
+                border_style=None,
+                box=None,
+                title_style=Style(color="blue"),
+                title_justify="left",
+                width=self.size.width,
+            )
+            table.add_column("key", style="dim", no_wrap=True, width=20)
+            table.add_column("value", no_wrap=True, width=self.size.width - 20)
+
+            table.add_row("string", render_string(self.metadata.string))
+            table.add_row("library name", self.metadata.library_name)
+            table.add_row("library version", self.metadata.library_version)
+            table.add_row("file path", self.metadata.file_path)
+            table.add_row("function name", self.metadata.function_name)
+            table.add_row("line number", str(self.metadata.line_number))
+
+            return table
+
+            # this is a hack to emit the table into a Text object.
+            # the table is supposed to be rendered to a console, which requires a size,
+            # so we emulate it here.
+            console = rich.console.Console(width=self.size.width, force_terminal=True)
+            with console.capture() as capture:
+                console.print(table)
+
+            ret.append(Text.from_ansi(capture.get()))
 
             # TODO: add action to delete
 
@@ -122,7 +152,7 @@ class OSSDatabaseView(VerticalScroll):
             Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}", style=Style(color="blue"))),
             Static(""),
             Input(placeholder="filter..."),
-            classes="dbedit--pane"
+            classes="dbedit--pane",
         )
         v.styles.height = 7
         yield v
@@ -185,8 +215,7 @@ class MainScreen(Screen):
         self.database_descriptors = database_descriptors
 
         self.databases: Dict[str, Database] = {
-            str(descriptor.path.absolute): self._load_database(descriptor)
-            for descriptor in self.database_descriptors
+            str(descriptor.path.absolute): self._load_database(descriptor) for descriptor in self.database_descriptors
         }
 
     def _load_database(self, descriptor: DatabaseDescriptor) -> Database:
@@ -248,22 +277,18 @@ class MainScreen(Screen):
             super().__init__(*args, **kwargs)
 
     def compose(self) -> ComposeResult:
-
         first_descriptor = self.database_descriptors[0]
         first_database = self.databases[str(first_descriptor.path.absolute)]
 
         yield Horizontal(
             ListView(
                 *[
-                    self.DatabaseListItem(
-                        descriptor,
-                        Label(f"{descriptor.type}: {descriptor.path.name}")
-                    )
+                    self.DatabaseListItem(descriptor, Label(f"{descriptor.type}: {descriptor.path.name}"))
                     for descriptor in self.database_descriptors
                 ],
-                classes="dblist"
+                classes="dblist",
             ),
-            UnsupportedDatabaseView(first_descriptor, first_database, classes="databaseview")
+            UnsupportedDatabaseView(first_descriptor, first_database, classes="databaseview"),
         )
 
         yield Footer()
@@ -291,9 +316,14 @@ class TitleScreen(Screen):
     """
 
     def compose(self) -> ComposeResult:
-        yield Label(textwrap.dedent("""\
+        yield Label(
+            textwrap.dedent(
+                """\
           QUANTUMSTRAND database editor
-        """.rstrip()), classes="logo")
+        """.rstrip()
+            ),
+            classes="logo",
+        )
 
 
 class DBEditApp(App):
@@ -345,10 +375,14 @@ class DBEditApp(App):
         self.title = "qs"
 
         self.database_descriptors = []
-        for type, module in (("expert", floss.qs.db.expert), ("gp", floss.qs.db.gp), ("oss", floss.qs.db.oss), ("winapi", floss.qs.db.winapi)):
+        for type, module in (
+            ("expert", floss.qs.db.expert),
+            ("gp", floss.qs.db.gp),
+            ("oss", floss.qs.db.oss),
+            ("winapi", floss.qs.db.winapi),
+        ):
             for path in module.DEFAULT_PATHS:
                 self.database_descriptors.append(DatabaseDescriptor(type, path))
-        
 
     def on_mount(self):
         self.push_screen(MainScreen(self.database_descriptors))
@@ -393,6 +427,5 @@ if __name__ == "__main__":
     import sys
     import mmap
     import argparse
-
 
     sys.exit(asyncio.run(main()))
