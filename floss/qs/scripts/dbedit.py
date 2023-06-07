@@ -10,7 +10,7 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.binding import Binding
-from textual.widgets import Input, Label, Footer, Static, TabPane, ListItem, ListView, TabbedContent
+from textual.widgets import Input, Label, Button, Footer, Static, ListItem, ListView
 from textual.containers import Vertical, Horizontal
 
 import floss.qs.db.gp
@@ -144,7 +144,7 @@ class OSSDatabaseView(Widget):
         }
 
         OSSDatabaseView Vertical.header {
-            height: 7;
+            height: 10;
         }
     """
 
@@ -228,6 +228,7 @@ class OSSDatabaseView(Widget):
         yield Vertical(
             Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}\n", style=Style(color="blue"))),
             Input(placeholder="filter..."),
+            Button("add string"),
             classes="dbedit--pane header",
         )
 
@@ -266,6 +267,16 @@ class OSSDatabaseView(Widget):
         await self.mount(self.StringsView(visible_strings))
         if visible_strings:
             await self.mount(self.StringMetadataView(visible_strings[0]))
+
+    class StringAdded(Message):
+        def __init__(self, database: DatabaseDescriptor, string: OpenSourceString) -> None:
+            self.database = database
+            self.string = string
+            super().__init__()
+
+    def on_button_pressed(self, ev):
+        ev.stop()
+        self.post_message(self.StringAdded(self.descriptor, OpenSourceString("new string", "foo", "unknown")))
 
 
 class UnsupportedDatabaseView(Widget):
@@ -382,11 +393,14 @@ class MainScreen(Screen):
         yield Horizontal(
             ListView(
                 *[
+                    # TODO: show string count
+                    # TODO: maybe strip file extension
                     self.DatabaseListItem(descriptor, Label(f"{descriptor.type}: {descriptor.path.name}"))
                     for descriptor in self.database_descriptors
                 ],
                 classes="dblist",
             ),
+            # this will be replaced upon click of something supported.
             UnsupportedDatabaseView(first_descriptor, first_database, classes="databaseview"),
         )
 
@@ -403,6 +417,25 @@ class MainScreen(Screen):
 
         self.query_one(".databaseview").remove()
         self.query_one("Horizontal").mount(view)
+
+    def on_ossdatabase_view_string_added(self, ev):
+        assert descriptor.type == "oss"
+
+        metadata: OpenSourceString = ev.string
+        descriptor: DatabaseDescriptor = ev.database
+
+        key = str(descriptor.path.absolute)
+        database = self.databases[key]
+
+        database.metadata_by_string[metadata.string] = metadata
+        database.to_file(descriptor.path)
+
+        self.databases[key] = self._load_database(descriptor)
+
+        # hack: reload the UI
+        # TODO: re-select the current database, for comfort
+        self.app.pop_screen()
+        self.app.push_screen(MainScreen(self.database_descriptors))
 
 
 class TitleScreen(Screen):
