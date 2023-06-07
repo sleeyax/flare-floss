@@ -3,10 +3,9 @@ import asyncio
 import logging
 import pathlib
 import textwrap
-from typing import Any, Set, Dict, List, Tuple, Literal, Mapping, Callable, Iterable, Optional, Sequence
+from typing import Any, Dict, List, Sequence
 from dataclasses import dataclass
 
-import rich.console
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widget import Widget
@@ -104,6 +103,9 @@ class VirtualList(ScrollView):
         segments = [Segment(s, style=style)]
 
         strip = Strip(segments)
+        if scroll_x >= strip.cell_length:
+            return Strip.blank(self.size.width)
+
         strip = strip.crop(scroll_x, scroll_x + self.size.width)
         return strip
 
@@ -128,7 +130,7 @@ class VirtualList(ScrollView):
 
 class OSSDatabaseView(VerticalScroll):
     filter = reactive(0)
-    visible_strings = reactive([])
+    visible_strings = reactive(None)
 
     DEFAULT_CSS = """
         OSSDatabaseView {
@@ -141,7 +143,6 @@ class OSSDatabaseView(VerticalScroll):
         super().__init__(*args, **kwargs)
 
         self.strings = list(sorted(self.database.metadata_by_string.values(), key=lambda x: x.string))
-        self.visible_strings = self.strings
 
     class StringMetadataView(Static):
         DEFAULT_CSS = """
@@ -202,7 +203,8 @@ class OSSDatabaseView(VerticalScroll):
 
         def compose(self):
             yield Static(Text("strings:\n", style=Style(color="blue")))
-            yield VirtualList([self.StringView(metadata) for metadata in self.strings])
+            if self.strings:
+                yield VirtualList([self.StringView(metadata) for metadata in self.strings])
 
         class StringSelected(Message):
             def __init__(self, string: OpenSourceString) -> None:
@@ -226,9 +228,9 @@ class OSSDatabaseView(VerticalScroll):
         v.styles.height = 7
         yield v
 
-        yield self.StringsView(self.visible_strings)
+        yield self.StringsView(self.strings)
 
-        yield self.StringMetadataView(self.visible_strings[0])
+        yield self.StringMetadataView(self.strings[0])
         # TODO: add action to add string
 
     def on_strings_view_string_selected(self, ev) -> None:
@@ -248,6 +250,11 @@ class OSSDatabaseView(VerticalScroll):
         self.log(f"filtered to {len(self.visible_strings)} strings")
 
     async def watch_visible_strings(self, visible_strings: List[OpenSourceString]) -> None:
+        if visible_strings is None:
+            # when the reactive is initialized, this fires with the default value, None.
+            # we want to skip this one event.
+            return
+
         await self.query_one("StringsView").remove()
         smv = self.query("StringMetadataView")
         if smv:
