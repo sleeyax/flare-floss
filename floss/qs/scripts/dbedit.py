@@ -19,7 +19,7 @@ import floss.qs.db.oss
 import floss.qs.db.expert
 import floss.qs.db.winapi
 from floss.qs.db.gp import StringHashDatabase, StringGlobalPrevalenceDatabase
-from floss.qs.db.oss import OpenSourceStringDatabase
+from floss.qs.db.oss import OpenSourceString, OpenSourceStringDatabase
 from floss.qs.db.expert import ExpertStringDatabase
 from floss.qs.db.winapi import WindowsApiStringDatabase
 
@@ -44,6 +44,9 @@ Database = (
 from rich.text import Text
 from rich.style import Style
 from rich.table import Table
+from rich.segment import Segment
+from textual.strip import Strip
+from textual.geometry import Size
 from textual.reactive import reactive
 from textual.containers import VerticalScroll
 from textual.scroll_view import ScrollView
@@ -56,7 +59,77 @@ def render_string(s: str):
 from textual.message import Message
 
 
+class VirtualList(ScrollView):
+    selected_index = reactive(0)
+
+    COMPONENT_CLASSES = {
+        "virtuallist--selected",
+        "virtuallist--unselected",
+    }
+
+    DEFAULT_CSS = """
+        VirtualList {
+        }
+
+        VirtualList .virtuallist--selected {
+            background: $primary;
+        }
+
+        VirtualList .virtuallist--unselected {
+        }
+    """
+
+    def __init__(self, items: Sequence[Any], *args, **kwargs):
+        self.items = items
+        super().__init__(*args, **kwargs)
+
+        max_width = max((len(str(item)) for item in self.items), default=0)
+        self.virtual_size = Size(width=max_width, height=len(self.items))
+
+    def render_line(self, y: int) -> Strip:
+        scroll_x, scroll_y = self.scroll_offset
+        row_index = y + scroll_y
+
+        if row_index >= len(self.items):
+            return Strip.blank(self.size.width)
+
+        item = self.items[row_index]
+        s = str(item)
+
+        if row_index == self.selected_index:
+            style = self.get_component_rich_style("virtuallist--selected")
+        else:
+            style = self.get_component_rich_style("virtuallist--unselected")
+
+        segments = [Segment(s, style=style)]
+
+        strip = Strip(segments)
+        strip = strip.crop(scroll_x, scroll_x + self.size.width)
+        return strip
+
+    class ItemSelected(Message):
+        def __init__(self, item) -> None:
+            self.item = item
+            super().__init__()
+
+    def on_click(self, event):
+        scroll_x, scroll_y = self.scroll_offset
+        row_index = event.y + scroll_y
+
+        if row_index >= len(self.items):
+            return Strip.blank(self.size.width)
+
+        item = self.items[row_index]
+        event.stop()
+
+        self.selected_index = row_index
+        self.post_message(self.ItemSelected(item))
+
+
 class OSSDatabaseView(VerticalScroll):
+    filter = reactive(0)
+    visible_strings = reactive([])
+
     DEFAULT_CSS = """
         OSSDatabaseView {
         }
@@ -68,19 +141,21 @@ class OSSDatabaseView(VerticalScroll):
         super().__init__(*args, **kwargs)
 
         self.strings = list(sorted(self.database.metadata_by_string.values(), key=lambda x: x.string))
+        self.visible_strings = self.strings
 
     class StringMetadataView(Static):
-        def __init__(self, metadata, *args, **kwargs):
-            self.metadata = metadata
+        DEFAULT_CSS = """
+            StringMetadataView {
+                height: 10;
+            }
+        """
+
+        def __init__(self, string: OpenSourceString, *args, **kwargs):
+            self.string = string
             super().__init__(*args, **kwargs)
             self.add_class("dbedit--pane")
 
         def render(self):
-            ret = Text(no_wrap=True, overflow="ellipsis")
-
-            ret.append_text(Text("metadata:\n", style=Style(color="blue")))
-            ret.append_text(Text("\n"))
-
             table = Table(
                 title="metadata:",
                 show_header=False,
@@ -94,55 +169,49 @@ class OSSDatabaseView(VerticalScroll):
             table.add_column("key", style="dim", no_wrap=True, width=20)
             table.add_column("value", no_wrap=True, width=self.size.width - 20)
 
-            table.add_row("string", render_string(self.metadata.string))
-            table.add_row("library name", self.metadata.library_name)
-            table.add_row("library version", self.metadata.library_version)
-            table.add_row("file path", self.metadata.file_path)
-            table.add_row("function name", self.metadata.function_name)
-            table.add_row("line number", str(self.metadata.line_number))
+            table.add_row("string", render_string(self.string.string))
+            table.add_row("library name", self.string.library_name)
+            table.add_row("library version", self.string.library_version)
+            table.add_row("file path", self.string.file_path)
+            table.add_row("function name", self.string.function_name)
+            table.add_row("line number", str(self.string.line_number))
 
             return table
 
-            # this is a hack to emit the table into a Text object.
-            # the table is supposed to be rendered to a console, which requires a size,
-            # so we emulate it here.
-            console = rich.console.Console(width=self.size.width, force_terminal=True)
-            with console.capture() as capture:
-                console.print(table)
+    class StringsView(Widget):
+        DEFAULT_CSS = """
+            StringsView {
+                width: 1fr;
+                height: 1fr;
+                layout: vertical;
+                overflow: hidden hidden;
+            }
+        """
 
-            ret.append(Text.from_ansi(capture.get()))
-
-            # TODO: add action to delete
-
-            return ret
-
-    class StringsView(VerticalScroll):
         def __init__(self, strings, *args, **kwargs):
             self.strings = strings
             super().__init__(*args, **kwargs)
             self.add_class("dbedit--pane")
 
+        class StringView:
+            def __init__(self, string: OpenSourceString) -> None:
+                self.string = string
+
+            def __str__(self) -> str:
+                return render_string(self.string.string)
+
         def compose(self):
-            # we use text here because 10k widgets is really slow with textual
-            ret = Text(no_wrap=True, overflow="ellipsis")
-
-            for metadata in self.strings:
-                # TODO: highlight the currently selected row
-                ret.append(render_string(metadata.string) + "\n")
-
             yield Static(Text("strings:\n", style=Style(color="blue")))
-
-            yield Static(ret)
+            yield VirtualList([self.StringView(metadata) for metadata in self.strings])
 
         class StringSelected(Message):
-            def __init__(self, string: floss.qs.db.oss.OpenSourceString) -> None:
+            def __init__(self, string: OpenSourceString) -> None:
                 self.string = string
                 super().__init__()
 
-        def on_click(self, event):
-            # TODO: bug in that click on the strings: title is handled here.
-            # we should ignore that, maybe by inspecting the parent widget.
-            string = self.strings[event.y]
+        def on_virtual_list_item_selected(self, event: VirtualList.ItemSelected):
+            item: self.StringView = event.item
+            string: OpenSourceString = item.string
             event.stop()
 
             self.post_message(self.StringSelected(string))
@@ -157,16 +226,36 @@ class OSSDatabaseView(VerticalScroll):
         v.styles.height = 7
         yield v
 
-        yield self.StringsView(self.strings)
+        yield self.StringsView(self.visible_strings)
 
-        m = self.StringMetadataView(self.strings[0])
-        m.styles.height = 10
-        yield m
+        yield self.StringMetadataView(self.visible_strings[0])
         # TODO: add action to add string
 
     def on_strings_view_string_selected(self, ev) -> None:
         self.query_one("StringMetadataView").remove()
         self.mount(self.StringMetadataView(ev.string))
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self.filter = str(event.value or "")
+        event.stop()
+        self.log("filter: " + self.filter)
+
+    def watch_filter(self, filter: str) -> None:
+        if not filter:
+            self.visible_strings = self.strings
+        else:
+            self.visible_strings = [string for string in self.strings if filter in string.string]
+        self.log(f"filtered to {len(self.visible_strings)} strings")
+
+    async def watch_visible_strings(self, visible_strings: List[OpenSourceString]) -> None:
+        await self.query_one("StringsView").remove()
+        smv = self.query("StringMetadataView")
+        if smv:
+            await smv.remove()
+
+        await self.mount(self.StringsView(visible_strings))
+        if visible_strings:
+            await self.mount(self.StringMetadataView(visible_strings[0]))
 
 
 class UnsupportedDatabaseView(Widget):
