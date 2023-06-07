@@ -133,6 +133,12 @@ class OSSDatabaseView(Widget):
     visible_strings = reactive(None)
 
     DEFAULT_CSS = """
+        OSSDatabaseView {
+            width: 1fr;
+            height: 1fr;
+            layout: vertical;
+        }
+
         OSSDatabaseView StringMetadataView {
             height: 11;
         }
@@ -201,7 +207,8 @@ class OSSDatabaseView(Widget):
                 return render_string(self.string.string)
 
         def compose(self):
-            yield Static(Text("strings:\n", style=Style(color="blue")))
+            count = len(self.strings) if self.strings else 0
+            yield Static(Text(f"strings ({count}):\n", style=Style(color="blue")))
             if self.strings:
                 yield VirtualList([self.StringView(metadata) for metadata in self.strings])
 
