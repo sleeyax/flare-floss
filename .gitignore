@@ -20,10 +20,10 @@ lib/
 # Test executables
 bin/
 
-# PyCharm
 .idea
 venv
 flare_floss.egg-info
 .eggs
 .direnv/
 .envrc
+.vscode

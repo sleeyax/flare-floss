@@ -6,7 +6,7 @@ name: publish to pypi
 on:
   release:
     types: [published]
-    branches: [ master ]
+    branches: [master]
 
 jobs:
   deploy:
