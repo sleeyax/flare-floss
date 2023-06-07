@@ -522,7 +522,6 @@ def collect_pe_structures(slice: Slice, pe: pefile.PE) -> Sequence[Structure]:
 
     # TODO: other structures
     # export table
-    # certificate data
     # rich header
 
     return structures
@@ -798,6 +797,17 @@ def compute_pe_layout(slice: Slice) -> Layout:
             SegmentLayout(
                 slice=slice.slice(offset, size),
                 name="overlay",
+            )
+        )
+
+    # the "overlay" may contain Authenticode digital signatures
+    security = pe.OPTIONAL_HEADER.DATA_DIRECTORY[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']]
+    if security.VirtualAddress and security.Size - 1 > 0:
+        last_section: Layout = layout.children[-1]
+        last_section.add_child(
+            SegmentLayout(
+                slice=slice.slice(security.VirtualAddress, security.Size - 1),
+                name="Authenticode digital signature",
             )
         )
 
@@ -1129,7 +1139,7 @@ def main():
     slice = Slice.from_bytes(buf)
 
     # build the layout tree that describes the structures and ranges of the file.
-    layout = compute_pe_layout(slice)
+    layout = compute_layout(slice)
 
     # recursively populate the `.strings: List[ExtractedString]` field of each layout node.
     extract_layout_strings(layout)
