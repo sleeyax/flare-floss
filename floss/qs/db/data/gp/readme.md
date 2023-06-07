@@ -35,8 +35,9 @@ The subsequent lines look like:
 JSONL databases:
 
   - gp.jsonl.gz: a proof-of-concept GP database derived from an internal string database. All strings were seen at least 100,000 times across millions of files. This database doesn't provide much value.
-  - cwindb-dotnet.jsonl.gz: strings seen in .NET modules found on a Windows 11 system during May 2023.
-  - cwindb-native.jsonl.gz: strings seen in native PE files found on a Windows 11 system during May 2023.
+  - cwindb-dotnet.jsonl.gz: strings seen in .NET modules found on a Windows 10 system during May 2023.
+  - cwindb-native.jsonl.gz: strings seen in native PE files found on a Windows 10 system during May 2023.
+  - junk-code.jsonl.gz: junk strings from .text section of native PE files found on a Windows 10 system during May 2023. These strings are likely instruction sequences and we use them to supplement our code analysis recovery solution.
 
 
 ## Hash databases

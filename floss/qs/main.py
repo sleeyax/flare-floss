@@ -391,6 +391,13 @@ def check_is_code(code_offsets: Set[int], string: ExtractedString):
         if addr in code_offsets:
             return ("#code",)
 
+    # supplement code analysis with a database of junk code strings
+    junk_db = StringGlobalPrevalenceDatabase.from_file(
+        pathlib.Path(floss.qs.db.__file__).parent / "data" / "gp" / "junk-code.jsonl.gz"
+    )
+    if query_global_prevalence_database(junk_db, string.string):
+        return ("#code-junk",)
+
     return ()
 
 
