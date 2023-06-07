@@ -128,12 +128,17 @@ class VirtualList(ScrollView):
         self.post_message(self.ItemSelected(item))
 
 
-class OSSDatabaseView(VerticalScroll):
+class OSSDatabaseView(Widget):
     filter = reactive(0)
     visible_strings = reactive(None)
 
     DEFAULT_CSS = """
-        OSSDatabaseView {
+        OSSDatabaseView StringMetadataView {
+            height: 11;
+        }
+
+        OSSDatabaseView Vertical.header {
+            height: 7;
         }
     """
 
@@ -145,12 +150,6 @@ class OSSDatabaseView(VerticalScroll):
         self.strings = list(sorted(self.database.metadata_by_string.values(), key=lambda x: x.string))
 
     class StringMetadataView(Static):
-        DEFAULT_CSS = """
-            StringMetadataView {
-                height: 10;
-            }
-        """
-
         def __init__(self, string: OpenSourceString, *args, **kwargs):
             self.string = string
             super().__init__(*args, **kwargs)
@@ -158,7 +157,7 @@ class OSSDatabaseView(VerticalScroll):
 
         def render(self):
             table = Table(
-                title="metadata:",
+                title="metadata:\n",
                 show_header=False,
                 show_lines=False,
                 border_style=None,
@@ -219,14 +218,11 @@ class OSSDatabaseView(VerticalScroll):
             self.post_message(self.StringSelected(string))
 
     def compose(self):
-        v = Vertical(
-            Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}", style=Style(color="blue"))),
-            Static(""),
+        yield Vertical(
+            Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}\n", style=Style(color="blue"))),
             Input(placeholder="filter..."),
-            classes="dbedit--pane",
+            classes="dbedit--pane header",
         )
-        v.styles.height = 7
-        yield v
 
         yield self.StringsView(self.strings)
 
