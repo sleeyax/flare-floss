@@ -127,8 +127,8 @@ MIN_STR_LEN = 6
 ASCII_BYTE = r" !\"#\$%&\'\(\)\*\+,-\./0123456789:;<=>\?@ABCDEFGHIJKLMNOPQRSTUVWXYZ\[\]\^_`abcdefghijklmnopqrstuvwxyz\{\|\}\\\~\t".encode(
     "ascii"
 )
-ASCII_RE_6 = re.compile(b"([%s]{%d,})" % (ASCII_BYTE, 6))
-UNICODE_RE_6 = re.compile(b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, 6))
+ASCII_RE_MIN = re.compile(b"([%s]{%d,})" % (ASCII_BYTE, MIN_STR_LEN))
+UNICODE_RE_MIN = re.compile(b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, MIN_STR_LEN))
 
 
 def extract_ascii_strings(slice: Slice, n: int = MIN_STR_LEN) -> Iterable[ExtractedString]:
@@ -139,7 +139,7 @@ def extract_ascii_strings(slice: Slice, n: int = MIN_STR_LEN) -> Iterable[Extrac
 
     r: re.Pattern
     if n == MIN_STR_LEN:
-        r = ASCII_RE_6
+        r = ASCII_RE_MIN
     else:
         reg = b"([%s]{%d,})" % (ASCII_BYTE, n)
         r = re.compile(reg)
@@ -159,7 +159,7 @@ def extract_unicode_strings(slice: Slice, n: int = MIN_STR_LEN) -> Iterable[Extr
 
     r: re.Pattern
     if n == MIN_STR_LEN:
-        r = UNICODE_RE_6
+        r = UNICODE_RE_MIN
     else:
         reg = b"((?:[%s]\x00){%d,})" % (ASCII_BYTE, n)
         r = re.compile(reg)
@@ -337,6 +337,8 @@ def render_string(width: int, s: TaggedString, tag_rules: TagRules) -> Text:
     right.append_text(render_string_padding())
     right.append_text(render_string_tags(s, tag_rules))
     right.append_text(render_string_padding())
+    # indicate encoding: ascii implicit default
+    right.append_text(Span("U " if s.string.encoding == "unicode" else "  "))
     right.append_text(render_string_offset(s))
     right.append_text(render_string_structure(s))
 
@@ -388,6 +390,13 @@ def check_is_code(code_offsets: Set[int], string: ExtractedString):
     for addr in string.slice.range:
         if addr in code_offsets:
             return ("#code",)
+
+    # supplement code analysis with a database of junk code strings
+    junk_db = StringGlobalPrevalenceDatabase.from_file(
+        pathlib.Path(floss.qs.db.__file__).parent / "data" / "gp" / "junk-code.jsonl.gz"
+    )
+    if query_global_prevalence_database(junk_db, string.string):
+        return ("#code-junk",)
 
     return ()
 
@@ -893,13 +902,13 @@ def compute_layout(slice: Slice) -> Layout:
     )
 
 
-def extract_layout_strings(layout: Layout):
+def extract_layout_strings(layout: Layout, min_len: int):
     if not layout.children:
         # all the strings are found in this slice directly.
 
         # at this moment, layout.strings contains only ExtractedStrings
         # after layout.tag_strings, it will contain TaggedStrings.
-        layout.strings = extract_strings(layout.slice)  # type: ignore
+        layout.strings = extract_strings(layout.slice, min_len)  # type: ignore
         return
 
     else:
@@ -941,7 +950,7 @@ def extract_layout_strings(layout: Layout):
 
         # now recurse to find the strings in the children.
         for child in layout.children:
-            extract_layout_strings(child)
+            extract_layout_strings(child, min_len)
 
 
 def collect_strings(layout: Layout) -> List[TaggedString]:
@@ -1102,6 +1111,14 @@ def main():
     # set environment variable FORCE_COLOR=1 to force color output, such as when piping to a pager.
     parser = argparse.ArgumentParser(description="Extract human readable strings from binary data, quantum-style.")
     parser.add_argument("path", help="file or path to analyze")
+    parser.add_argument(
+        "-n",
+        "--minimum-length",
+        dest="min_length",
+        type=int,
+        default=MIN_STR_LEN,
+        help="minimum string length",
+    )
     logging_group = parser.add_argument_group("logging arguments")
     logging_group.add_argument("-d", "--debug", action="store_true", help="enable debugging output on STDERR")
     logging_group.add_argument(
@@ -1148,7 +1165,7 @@ def main():
     layout = compute_layout(slice)
 
     # recursively populate the `.strings: List[ExtractedString]` field of each layout node.
-    extract_layout_strings(layout)
+    extract_layout_strings(layout, args.min_length)
 
     # recursively apply tags to the strings in the layout tree.
     # the `.strings` field now contains TaggedStrings (not ExtractedStrings).
