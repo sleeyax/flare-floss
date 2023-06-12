@@ -877,14 +877,20 @@ def compute_pe_layout(slice: Slice) -> Layout:
 
 def compute_layout(slice: Slice) -> Layout:
     data = slice.data
-    if data.startswith(b"MZ"):
-        return compute_pe_layout(slice)
 
-    else:
-        return SegmentLayout(
-            slice=slice,
-            name="binary",
-        )
+    # try to parse as PE file
+    if data.startswith(b"MZ"):
+        try:
+            return compute_pe_layout(slice)
+        except ValueError as e:
+            logger.debug("failed to parse as PE file: %s", e)
+            # fall back to using the default binary layout
+            pass
+
+    return SegmentLayout(
+        slice=slice,
+        name="binary",
+    )
 
 
 def extract_layout_strings(layout: Layout):
