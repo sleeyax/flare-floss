@@ -3,10 +3,15 @@ import asyncio
 import logging
 import pathlib
 import textwrap
-from typing import Any, Dict, List, Sequence
+import dataclasses
+from typing import Any, Dict, List, Literal, Sequence
 from dataclasses import dataclass
 
+import msgspec
+import msgspec.json
+from textual import on
 from textual.app import App, ComposeResult
+from textual.events import Click, Mount
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.binding import Binding
@@ -25,10 +30,19 @@ from floss.qs.db.winapi import WindowsApiStringDatabase
 logger = logging.getLogger("floss.qs.dbedit")
 
 
-@dataclass
+@dataclass(frozen=True)
 class DatabaseDescriptor:
     type: str
     path: pathlib.Path
+
+
+@dataclass(frozen=True)
+class DatabaseOperation:
+    database: DatabaseDescriptor
+    op: Literal["add", "remove"]
+
+    # database-specific type, like OpenSourceString for OpenSourceStringDatabase
+    string: Any
 
 
 Database = (
@@ -38,6 +52,17 @@ Database = (
     | WindowsApiStringDatabase
     | OpenSourceStringDatabase
 )
+
+
+class DataclassJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if dataclasses.is_dataclass(o):
+            return dataclasses.asdict(o)
+        elif isinstance(o, pathlib.Path):
+            return str(o)
+        elif isinstance(o, msgspec.Struct):
+            return json.loads(msgspec.json.encode(o).decode("utf-8"))
+        return super().default(o)
 
 
 from rich.text import Text
@@ -56,6 +81,16 @@ def render_string(s: str):
 
 
 from textual.message import Message
+
+
+async def replace_one(self: Widget, query: str, widget: Widget):
+    existing = self.query_one(query)
+    container = existing.parent
+    assert container is not None
+
+    # mount then remove so that we can maintain the order of widgets
+    await container.mount(widget, after=existing)
+    await existing.remove()
 
 
 class VirtualList(ScrollView):
@@ -114,7 +149,8 @@ class VirtualList(ScrollView):
             self.item = item
             super().__init__()
 
-    def on_click(self, event):
+    @on(Click)
+    def on_row_selected(self, event):
         scroll_x, scroll_y = self.scroll_offset
         row_index = event.y + scroll_y
 
@@ -129,8 +165,8 @@ class VirtualList(ScrollView):
 
 
 class OSSDatabaseView(Widget):
-    filter = reactive(0)
-    visible_strings = reactive(None)
+    filter: str = reactive("")
+    visible_strings: List[OpenSourceString] = reactive([])
 
     DEFAULT_CSS = """
         OSSDatabaseView {
@@ -217,7 +253,8 @@ class OSSDatabaseView(Widget):
                 self.string = string
                 super().__init__()
 
-        def on_virtual_list_item_selected(self, event: VirtualList.ItemSelected):
+        @on(VirtualList.ItemSelected)
+        def on_string_selected(self, event: VirtualList.ItemSelected):
             item: self.StringView = event.item
             string: OpenSourceString = item.string
             event.stop()
@@ -228,23 +265,25 @@ class OSSDatabaseView(Widget):
         yield Vertical(
             Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}\n", style=Style(color="blue"))),
             Input(placeholder="filter..."),
-            Button("add string"),
+            Button("add string", classes="add-button"),
             classes="dbedit--pane header",
         )
 
         yield self.StringsView(self.strings)
 
         yield self.StringMetadataView(self.strings[0])
-        # TODO: add action to add string
 
-    def on_strings_view_string_selected(self, ev) -> None:
-        self.query_one("StringMetadataView").remove()
-        self.mount(self.StringMetadataView(ev.string))
+    @on(StringsView.StringSelected)
+    async def on_string_selected(self, ev) -> None:
+        await self.query_one("StringMetadataView").remove()
+        await self.mount(self.StringMetadataView(ev.string))
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        self.filter = str(event.value or "")
+    @on(Input.Changed)
+    def on_filter_changed(self, event: Input.Changed) -> None:
         event.stop()
+
         self.log("filter: " + self.filter)
+        self.filter = str(event.value or "")
 
     def watch_filter(self, filter: str) -> None:
         if not filter:
@@ -274,9 +313,13 @@ class OSSDatabaseView(Widget):
             self.string = string
             super().__init__()
 
-    def on_button_pressed(self, ev):
+    @on(Button.Pressed, selector=".add-button")
+    def on_add_string(self, ev):
         ev.stop()
-        self.post_message(self.StringAdded(self.descriptor, OpenSourceString("new string", "foo", "unknown")))
+
+        # TODO: fetch the string
+        s = OpenSourceString("new string", "foo", "unknown")
+        self.post_message(self.StringAdded(self.descriptor, s))
 
 
 class UnsupportedDatabaseView(Widget):
@@ -287,7 +330,7 @@ class UnsupportedDatabaseView(Widget):
         }
     """
 
-    def __init__(self, descriptor: DatabaseDescriptor, database: OpenSourceStringDatabase, *args, **kwargs):
+    def __init__(self, descriptor: DatabaseDescriptor, database: Any, *args, **kwargs):
         self.descriptor = descriptor
         self.database = database
         super().__init__(*args, **kwargs)
@@ -297,15 +340,67 @@ class UnsupportedDatabaseView(Widget):
         yield Static(f"unsupported database: {self.descriptor.type} {self.descriptor.path.name}")
 
 
+class PendingOperationsView(Widget):
+    DEFAULT_CSS = """
+        PendingOperationsView .controls {
+            height: 5;
+        }
+    """
+    pending_operations: List[DatabaseOperation] = reactive([])
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_class("dbedit--pane")
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(Text("pending operations:\n", style=Style(color="blue"))),
+            Static(Text("(none)", style=Style(color="grey50")), classes="oplist"),
+            Horizontal(
+                Button("commit", classes="button-commit"), Button("reset", classes="button-reset"), classes="controls"
+            ),
+        )
+
+    async def render_oplist(self):
+        await replace_one(
+            self, ".oplist", ListView(*[ListItem(Static(str(op))) for op in self.pending_operations], classes="oplist")
+        )
+
+    async def watch_pending_operations(self, pending_operations):
+        await self.render_oplist()
+
+    class Commit(Message):
+        pass
+
+    class Reset(Message):
+        pass
+
+    @on(Button.Pressed, selector=".button-commit")
+    async def on_commit(self) -> None:
+        self.post_message(self.Commit())
+
+    @on(Button.Pressed, selector=".button-reset")
+    async def on_reset(self) -> None:
+        self.post_message(self.Reset())
+
+
 class MainScreen(Screen):
+    pending_operations: List[DatabaseOperation] = reactive([])
+
     DEFAULT_CSS = """
         MainScreen {
         }
         
-        MainScreen Horizontal ListView.dblist {
-            width: 30;
-            padding-top: 1;
-            border-right: solid grey;
+        MainScreen .navpane {
+            width: 34;
+        }
+
+        MainScreen .navpane .dblist {
+            height: 1fr;
+        }
+
+        MainScreen .navpane PendingOperationsView {
+            height: 1fr;
         }
     """
 
@@ -391,14 +486,18 @@ class MainScreen(Screen):
         first_database = self.databases[str(first_descriptor.path.absolute)]
 
         yield Horizontal(
-            ListView(
-                *[
-                    # TODO: show string count
-                    # TODO: maybe strip file extension
-                    self.DatabaseListItem(descriptor, Label(f"{descriptor.type}: {descriptor.path.name}"))
-                    for descriptor in self.database_descriptors
-                ],
-                classes="dblist",
+            Vertical(
+                ListView(
+                    *[
+                        # TODO: show string count
+                        # TODO: maybe strip file extension
+                        self.DatabaseListItem(descriptor, Label(f"{descriptor.type}: {descriptor.path.name}"))
+                        for descriptor in self.database_descriptors
+                    ],
+                    classes="dblist dbedit--pane",
+                ),
+                PendingOperationsView(),
+                classes="navpane",
             ),
             # this will be replaced upon click of something supported.
             UnsupportedDatabaseView(first_descriptor, first_database, classes="databaseview"),
@@ -406,8 +505,11 @@ class MainScreen(Screen):
 
         yield Footer()
 
-    def on_list_view_selected(self, ev: ListView.Selected) -> None:
-        descriptor = ev.item.database
+    @on(ListView.Selected, selector=".dblist")
+    async def on_database_selected(self, ev: ListView.Selected) -> None:
+        item = ev.item
+        assert isinstance(item, self.DatabaseListItem)
+        descriptor = item.database
         database = self.databases[str(descriptor.path.absolute)]
 
         if descriptor.type == "oss":
@@ -415,27 +517,74 @@ class MainScreen(Screen):
         else:
             view = UnsupportedDatabaseView(descriptor, database, classes="databaseview")
 
-        self.query_one(".databaseview").remove()
-        self.query_one("Horizontal").mount(view)
+        await replace_one(self, ".databaseview", view)
 
-    def on_ossdatabase_view_string_added(self, ev):
-        assert descriptor.type == "oss"
-
+    @on(OSSDatabaseView.StringAdded)
+    def on_oss_string_added(self, ev):
         metadata: OpenSourceString = ev.string
         descriptor: DatabaseDescriptor = ev.database
 
-        key = str(descriptor.path.absolute)
-        database = self.databases[key]
+        assert descriptor.type == "oss"
 
-        database.metadata_by_string[metadata.string] = metadata
-        database.to_file(descriptor.path)
+        op = DatabaseOperation(descriptor, "add", metadata)
+        self.log("op: " + str(op))
 
-        self.databases[key] = self._load_database(descriptor)
+        # TODO: dedup
+        self.pending_operations = self.pending_operations + [op]
+
+    def watch_pending_operations(self, pending_operations):
+        self.query_one("PendingOperationsView", PendingOperationsView).pending_operations = pending_operations
+
+    @on(PendingOperationsView.Commit)
+    def on_commit(self):
+        if not self.pending_operations:
+            return
+
+        for descriptor in self.database_descriptors:
+            key = str(descriptor.path.absolute)
+            database = self.databases[key]
+
+            ops = [op for op in self.pending_operations if op.database == descriptor]
+
+            if not ops:
+                continue
+
+            if descriptor.type == "oss":
+                assert isinstance(database, OpenSourceStringDatabase)
+
+                for op in ops:
+                    if op.op == "add":
+                        database.metadata_by_string[op.string.string] = op.string
+                    elif op.op == "remove":
+                        del database.metadata_by_string[op.string.string]
+                    else:
+                        raise ValueError(f"unknown operation: {op.op}")
+
+                database.to_file(descriptor.path)
+                self.databases[key] = self._load_database(descriptor)
+            else:
+                raise NotImplementedError(f"commit not implemented for database type: {descriptor.type}")
+
+        log = pathlib.Path(floss.qs.db.__file__).parent / "data" / "db.log"
+        if log.exists():
+            entries = log.read_text(encoding="utf-8").split("\n")
+        else:
+            entries = []
+        entries.extend([json.dumps(op, cls=DataclassJSONEncoder) for op in self.pending_operations])
+        log.write_text("\n".join(entries), encoding="utf-8")
+
+        # we would update this,
+        # but we're about to tear down the entire screen.
+        # self.pending_operations = []
 
         # hack: reload the UI
         # TODO: re-select the current database, for comfort
         self.app.pop_screen()
         self.app.push_screen(MainScreen(self.database_descriptors))
+
+    @on(PendingOperationsView.Reset)
+    def on_reset(self):
+        self.pending_operations = []
 
 
 class TitleScreen(Screen):
@@ -508,14 +657,16 @@ class DBEditApp(App):
 
         self.database_descriptors = []
         for type, module in (
-            ("expert", floss.qs.db.expert),
-            ("gp", floss.qs.db.gp),
+            # TODO: disabled during dev
+            # ("expert", floss.qs.db.expert),
+            # ("gp", floss.qs.db.gp),
             ("oss", floss.qs.db.oss),
-            ("winapi", floss.qs.db.winapi),
+            # ("winapi", floss.qs.db.winapi),
         ):
             for path in module.DEFAULT_PATHS:
                 self.database_descriptors.append(DatabaseDescriptor(type, path))
 
+    @on(Mount)
     def on_mount(self):
         self.push_screen(MainScreen(self.database_descriptors))
 
