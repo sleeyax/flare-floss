@@ -164,6 +164,38 @@ class VirtualList(ScrollView):
         self.post_message(self.ItemSelected(item))
 
 
+class InlineButton(Static):
+    DEFAULT_CSS = """
+        InlineButton {
+            margin-left: 1;
+            margin-right: 1;
+        }
+
+        InlineButton:hover {
+            background: $primary;
+        }
+    """
+
+    def __init__(self, label: str, *args, **kwargs):
+        self.label = label
+        super().__init__(*args, **kwargs)
+        self.styles.width = len(self.label) + 4
+
+    def render(self) -> Text:
+        ret = Text()
+
+        ret.append_text(Text(f"[ ", style=Style(color="grey0")))
+        ret.append_text(Text(self.label, style=Style(color="blue")))
+        ret.append_text(Text(f" ]", style=Style(color="grey0")))
+
+        return ret
+
+    @on(Click)
+    def on_click(self, ev):
+        ev.stop()
+        self.post_message(Button.Pressed(self))
+
+
 class OSSDatabaseView(Widget):
     filter: str = reactive("")
     visible_strings: List[OpenSourceString] = reactive([])
@@ -180,7 +212,12 @@ class OSSDatabaseView(Widget):
         }
 
         OSSDatabaseView Vertical.header {
-            height: 10;
+            height: 9;
+        }
+
+        OSSDatabaseView Vertical.header InlineButton.add-button {
+            margin-top: 1;
+            margin-left: 1;
         }
     """
 
@@ -228,6 +265,7 @@ class OSSDatabaseView(Widget):
                 layout: vertical;
                 overflow: hidden hidden;
             }
+
         """
 
         def __init__(self, strings, *args, **kwargs):
@@ -265,7 +303,7 @@ class OSSDatabaseView(Widget):
         yield Vertical(
             Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}\n", style=Style(color="blue"))),
             Input(placeholder="filter..."),
-            Button("add string", classes="add-button"),
+            InlineButton("add string", classes="add-button"),
             classes="dbedit--pane header",
         )
 
@@ -343,7 +381,7 @@ class UnsupportedDatabaseView(Widget):
 class PendingOperationsView(Widget):
     DEFAULT_CSS = """
         PendingOperationsView .controls {
-            height: 5;
+            height: 1;
         }
     """
     pending_operations: List[DatabaseOperation] = reactive([])
@@ -357,7 +395,7 @@ class PendingOperationsView(Widget):
             Static(Text("pending operations:\n", style=Style(color="blue"))),
             Static(Text("(none)", style=Style(color="grey50")), classes="oplist"),
             Horizontal(
-                Button("commit", classes="button-commit"), Button("reset", classes="button-reset"), classes="controls"
+                InlineButton("commit", classes="button-commit"), InlineButton("reset", classes="button-reset"), classes="controls"
             ),
         )
 
