@@ -78,20 +78,20 @@ class StringGlobalPrevalenceDatabase:
             metadata_by_string=metadata_by_string,
         )
 
-    def to_file(self, outfile: str, compress: bool = True):
+    def to_file(self, path: pathlib.Path, compress: bool = True):
         if compress:
-            with gzip.open(outfile, "w") as f:
+            with path.open("wb") as f:
                 f.write(msgspec.json.encode(self.meta) + b"\n")
                 for k, v in sorted(self.metadata_by_string.items(), key=lambda x: x[1][0].global_count, reverse=True):
                     # TODO needs fixing to write most common to least common
                     for e in v:
                         f.write(msgspec.json.encode(e) + b"\n")
         else:
-            with open(outfile, "w", encoding="utf-8") as f:
-                f.write(msgspec.json.encode(self.meta).decode("utf-8") + "\n")
+            with path.open("wb") as f:
+                f.write((msgspec.json.encode(self.meta).decode("utf-8") + "\n").encode("utf-8"))
                 for k, v in sorted(self.metadata_by_string.items(), key=lambda x: x[1][0].global_count, reverse=True):
                     for e in v:
-                        f.write(msgspec.json.encode(e).decode("utf-8") + "\n")
+                        f.write((msgspec.json.encode(e).decode("utf-8") + "\n").encode("utf-8"))
 
 
 @dataclass
