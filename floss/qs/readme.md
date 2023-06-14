@@ -19,5 +19,6 @@ Of course, this is an experiment, so there are no guarantees and many things yet
   - highlight strings that match expert rules, via embedded databases
 
 
-![screenshot 1](https://github.com/mandiant/flare-floss/assets/156560/ed7fb658-742b-40f8-87f5-a2674d7db3c0)
-![screenshot 2](https://github.com/mandiant/flare-floss/assets/156560/65a1429a-e538-4154-8474-c4de7f2d2df1)
+![screenshot 1](https://github.com/mandiant/flare-floss/assets/156560/f2d471a3-2624-498c-aaa9-928e2909c338)
+![screenshot 2](https://github.com/mandiant/flare-floss/assets/156560/23bd20a1-7dff-46b5-be65-12582cb90d64)
+
