@@ -57,7 +57,7 @@ setuptools.setup(
     extras_require={
         "qs": [
             "dnfile==0.13.0",
-            "textual==0.27.0",
+            "textual==0.28.1",
             "msgspec==0.14.2",
             "colorama==0.4.6",
             "python-lancelot==0.8.7",

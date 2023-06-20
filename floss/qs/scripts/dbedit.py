@@ -4,7 +4,7 @@ import logging
 import pathlib
 import textwrap
 import dataclasses
-from typing import Any, Dict, List, Literal, Sequence
+from typing import Any, Dict, List, Literal, Optional, Sequence
 from dataclasses import dataclass
 
 import msgspec
@@ -15,8 +15,9 @@ from textual.events import Click, Mount
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.binding import Binding
+from textual.screen import ModalScreen
 from textual.widgets import Input, Label, Button, Footer, Static, ListItem, ListView
-from textual.containers import Vertical, Horizontal
+from textual.containers import Vertical, Horizontal, Container, Center
 
 import floss.qs.db.gp
 import floss.qs.db.oss
@@ -34,6 +35,13 @@ logger = logging.getLogger("floss.qs.dbedit")
 class DatabaseDescriptor:
     type: str
     path: pathlib.Path
+
+    @property
+    def tag(self) -> str:
+        if self.type == "oss":
+            return self.path.name.partition(".")[0]
+        else:
+            raise NotImplemented
 
 
 @dataclass(frozen=True)
@@ -345,6 +353,121 @@ class OSSDatabaseView(Widget):
         if visible_strings:
             await self.mount(self.StringMetadataView(visible_strings[0]))
 
+    class AddButtonScreen(ModalScreen[Optional[OpenSourceString]]):  
+        DEFAULT_CSS = """
+            AddButtonScreen .background {
+                background: $surface;
+                align-horizontal: center;
+                align-vertical: middle;
+                height: 100%;
+                width: 100%;
+            }
+
+            AddButtonScreen .dialog {
+                width: 80;
+                height: 27;
+                border: thick $background 80%;
+            }
+
+            AddButtonScreen .dialog .title {
+                color: $primary;
+                margin-left: 2;
+                margin-bottom: 1;
+            }
+
+            AddButtonScreen .dialog .first-row {
+                height: 3;
+            }
+
+            AddButtonScreen .dialog .first-row .input-tag {
+                width: 1fr;
+            }
+
+            AddButtonScreen .dialog .first-row .input-string {
+                width: 3fr;
+            }
+
+            AddButtonScreen .dialog .rest-row  {
+                width: 100%;
+            }
+
+            AddButtonScreen .dialog .rest-row Input {
+                width: 100%;
+                margin-top: 1;
+            }
+
+            AddButtonScreen .dialog .actions {
+                margin-top: 1;
+                margin-bottom: 1;
+                height: 1;
+                width: 100%;
+            }
+
+            AddButtonScreen .dialog .actions Horizontal {
+                width: auto;
+            }
+        """
+
+        BINDINGS = [
+            Binding("q", "close", "Close"),
+            Binding("escape", "close", "Close"),
+        ]
+
+        def __init__(self, descriptor: DatabaseDescriptor, *args, **kwargs): 
+            self.descriptor = descriptor
+            super().__init__(*args, **kwargs)
+
+        def compose(self) -> ComposeResult:
+            yield Container(
+                Vertical(
+                    Label("Add new string", classes="title"),
+                    Horizontal(
+                        Input(value="#" + self.descriptor.tag, disabled=True, classes="input-tag"),
+                        Input(placeholder="string...", classes="input-string"),
+                        classes="first-row",
+                    ),
+
+                    Vertical(
+                        Input(placeholder="library version (optional)", classes="input-version"),
+                        Input(placeholder="file path (optional)", classes="input-path"),
+                        Input(placeholder="function name (optional)", classes="input-function"),
+                        Input(placeholder="line number (optional)", classes="input-line"),
+                        classes="rest-row"
+                    ),
+
+                    Center(
+                        Horizontal(
+                            InlineButton("Cancel", id="cancel"),
+                            InlineButton("Add", id="add"),
+                        ),
+                        classes="actions",
+                    ),
+                    classes="dialog",
+                ),
+                classes="background"
+            )
+
+        def action_close(self):
+            self.dismiss(None)
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "add":
+
+                tag = self.query_one(".input-tag", Input).value
+                string = self.query_one(".input-string", Input).value
+                version = self.query_one(".input-version", Input).value or None
+                path = self.query_one(".input-path", Input).value or None
+                function = self.query_one(".input-function", Input).value or None
+                line = self.query_one(".input-line", Input).value or None
+
+                if not string:
+                    self.dismiss(None)
+
+                s = OpenSourceString(string, tag, version, path, function, line)
+                self.dismiss(s)
+            else:
+                self.dismiss(None)
+
     class StringAdded(Message):
         def __init__(self, database: DatabaseDescriptor, string: OpenSourceString) -> None:
             self.database = database
@@ -355,9 +478,13 @@ class OSSDatabaseView(Widget):
     def on_add_string(self, ev):
         ev.stop()
 
-        # TODO: fetch the string
-        s = OpenSourceString("new string", "foo", "unknown")
-        self.post_message(self.StringAdded(self.descriptor, s))
+        def handle_add(s: OpenSourceString) -> None:
+            if s is None:
+                return
+
+            self.post_message(self.StringAdded(self.descriptor, s))
+
+        self.app.push_screen(self.AddButtonScreen(self.descriptor), handle_add)
 
 
 class UnsupportedDatabaseView(Widget):
