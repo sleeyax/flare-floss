@@ -12,12 +12,11 @@ import msgspec.json
 from textual import on
 from textual.app import App, ComposeResult
 from textual.events import Click, Mount
-from textual.screen import Screen
+from textual.screen import Screen, ModalScreen
 from textual.widget import Widget
 from textual.binding import Binding
-from textual.screen import ModalScreen
 from textual.widgets import Input, Label, Button, Footer, Static, ListItem, ListView
-from textual.containers import Vertical, Horizontal, Container, Center
+from textual.containers import Center, Vertical, Container, Horizontal
 
 import floss.qs.db.gp
 import floss.qs.db.oss
@@ -280,14 +279,14 @@ class OSSDatabaseView(Widget):
             table.add_row("file path", self.string.file_path)
             table.add_row("function name", self.string.function_name)
             table.add_row("line number", str(self.string.line_number))
-            
+
             yield Vertical(
                 Horizontal(
                     Static(Text(f" metadata:", style=Style(color="blue"))),
                     InlineButton("delete string", classes="del-button"),
                     classes="title",
                 ),
-                Static(table)
+                Static(table),
             )
 
         class StringRemoved(Message):
@@ -298,7 +297,6 @@ class OSSDatabaseView(Widget):
         @on(Button.Pressed, ".del-button")
         def on_del(self) -> None:
             self.post_message(self.StringRemoved(self.string))
-
 
     class StringsView(Widget):
         DEFAULT_CSS = """
@@ -345,7 +343,11 @@ class OSSDatabaseView(Widget):
         yield Vertical(
             Vertical(
                 Horizontal(
-                    Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}\n", style=Style(color="blue"))),
+                    Static(
+                        Text(
+                            f"database: {self.descriptor.type} {self.descriptor.path.name}\n", style=Style(color="blue")
+                        )
+                    ),
                     InlineButton("add string", classes="add-button"),
                     classes="title",
                 ),
@@ -353,10 +355,12 @@ class OSSDatabaseView(Widget):
                 classes="header",
             ),
             self.StringsView(self.strings),
-            classes="dbedit--pane"
+            classes="dbedit--pane",
         )
 
-        yield self.StringMetadataView(self.strings[0]) if self.strings else Static(Text("no strings", style=Style(color="grey50")))
+        yield self.StringMetadataView(self.strings[0]) if self.strings else Static(
+            Text("no strings", style=Style(color="grey50"))
+        )
 
     @on(StringsView.StringSelected)
     async def on_string_selected(self, ev) -> None:
@@ -395,7 +399,7 @@ class OSSDatabaseView(Widget):
             else:
                 await smv.remove()
 
-    class AddButtonScreen(ModalScreen[Optional[OpenSourceString]]):  
+    class AddButtonScreen(ModalScreen[Optional[OpenSourceString]]):
         DEFAULT_CSS = """
             AddButtonScreen .background {
                 background: $surface;
@@ -455,7 +459,7 @@ class OSSDatabaseView(Widget):
             Binding("escape", "close", "Close"),
         ]
 
-        def __init__(self, descriptor: DatabaseDescriptor, *args, **kwargs): 
+        def __init__(self, descriptor: DatabaseDescriptor, *args, **kwargs):
             self.descriptor = descriptor
             super().__init__(*args, **kwargs)
 
@@ -468,15 +472,13 @@ class OSSDatabaseView(Widget):
                         Input(placeholder="string...", classes="input-string"),
                         classes="first-row",
                     ),
-
                     Vertical(
                         Input(placeholder="library version (optional)", classes="input-version"),
                         Input(placeholder="file path (optional)", classes="input-path"),
                         Input(placeholder="function name (optional)", classes="input-function"),
                         Input(placeholder="line number (optional)", classes="input-line"),
-                        classes="rest-row"
+                        classes="rest-row",
                     ),
-
                     Center(
                         Horizontal(
                             InlineButton("Cancel", id="cancel"),
@@ -486,7 +488,7 @@ class OSSDatabaseView(Widget):
                     ),
                     classes="dialog",
                 ),
-                classes="background"
+                classes="background",
             )
 
         def action_close(self):
@@ -577,7 +579,9 @@ class PendingOperationsView(Widget):
             Static(Text("pending operations:\n", style=Style(color="blue"))),
             Static(Text("(none)", style=Style(color="grey50")), classes="oplist"),
             Horizontal(
-                InlineButton("commit", classes="button-commit"), InlineButton("reset", classes="button-reset"), classes="controls"
+                InlineButton("commit", classes="button-commit"),
+                InlineButton("reset", classes="button-reset"),
+                classes="controls",
             ),
         )
 
@@ -585,7 +589,6 @@ class PendingOperationsView(Widget):
         items = []
         for op in self.pending_operations:
             if op.database.type == "oss":
-
                 t = Text()
                 if op.op == "add":
                     t.append_text(Text("+"))
@@ -601,9 +604,7 @@ class PendingOperationsView(Widget):
             else:
                 raise NotImplemented
 
-        await replace_one(
-            self, ".oplist", ListView(*items, classes="oplist")
-        )
+        await replace_one(self, ".oplist", ListView(*items, classes="oplist"))
 
     async def watch_pending_operations(self):
         await self.render_oplist()
