@@ -215,18 +215,27 @@ class OSSDatabaseView(Widget):
             layout: vertical;
         }
 
-        OSSDatabaseView StringMetadataView {
-            height: 11;
+        OSSDatabaseView .header {
+            height: 5;
         }
 
-        OSSDatabaseView Vertical.header {
-            height: 9;
+        OSSDatabaseView .header .title {
+            margin-left: 1;
         }
 
-        OSSDatabaseView Vertical.header InlineButton.add-button {
+        OSSDatabaseView .header .title InlineButton.add-button {
+            dock: right;
+        }
+
+        OSSDatabaseView StringsView {
             margin-top: 1;
             margin-left: 1;
         }
+
+        OSSDatabaseView Vertical StringMetadataView {
+            height: 11;
+        }
+
     """
 
     def __init__(self, descriptor: DatabaseDescriptor, database: OpenSourceStringDatabase, *args, **kwargs):
@@ -236,25 +245,34 @@ class OSSDatabaseView(Widget):
 
         self.strings = list(sorted(self.database.metadata_by_string.values(), key=lambda x: x.string))
 
-    class StringMetadataView(Static):
+    class StringMetadataView(Widget):
+        DEFAULT_CSS = """
+            StringMetadataView {
+                height: 10;
+                width: 100%;
+            }
+
+            StringMetadataView .del-button {
+                dock: right;
+            }
+        """
+
         def __init__(self, string: OpenSourceString, *args, **kwargs):
             self.string = string
             super().__init__(*args, **kwargs)
             self.add_class("dbedit--pane")
 
-        def render(self):
+        def compose(self):
             table = Table(
-                title="metadata:\n",
                 show_header=False,
                 show_lines=False,
                 border_style=None,
                 box=None,
                 title_style=Style(color="blue"),
                 title_justify="left",
-                width=self.size.width,
             )
-            table.add_column("key", style="dim", no_wrap=True, width=20)
-            table.add_column("value", no_wrap=True, width=self.size.width - 20)
+            table.add_column("key", style="dim", no_wrap=True, width=35)
+            table.add_column("value", no_wrap=True, width=1000)
 
             table.add_row("string", render_string(self.string.string))
             table.add_row("library name", self.string.library_name)
@@ -262,8 +280,25 @@ class OSSDatabaseView(Widget):
             table.add_row("file path", self.string.file_path)
             table.add_row("function name", self.string.function_name)
             table.add_row("line number", str(self.string.line_number))
+            
+            yield Vertical(
+                Horizontal(
+                    Static(Text(f" metadata:", style=Style(color="blue"))),
+                    InlineButton("delete string", classes="del-button"),
+                    classes="title",
+                ),
+                Static(table)
+            )
 
-            return table
+        class StringRemoved(Message):
+            def __init__(self, string: OpenSourceString) -> None:
+                self.string = string
+                super().__init__()
+
+        @on(Button.Pressed, ".del-button")
+        def on_del(self) -> None:
+            self.post_message(self.StringRemoved(self.string))
+
 
     class StringsView(Widget):
         DEFAULT_CSS = """
@@ -279,7 +314,6 @@ class OSSDatabaseView(Widget):
         def __init__(self, strings, *args, **kwargs):
             self.strings = strings
             super().__init__(*args, **kwargs)
-            self.add_class("dbedit--pane")
 
         class StringView:
             def __init__(self, string: OpenSourceString) -> None:
@@ -309,49 +343,57 @@ class OSSDatabaseView(Widget):
 
     def compose(self):
         yield Vertical(
-            Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}\n", style=Style(color="blue"))),
-            Input(placeholder="filter..."),
-            InlineButton("add string", classes="add-button"),
-            classes="dbedit--pane header",
+            Vertical(
+                Horizontal(
+                    Static(Text(f"database: {self.descriptor.type} {self.descriptor.path.name}\n", style=Style(color="blue"))),
+                    InlineButton("add string", classes="add-button"),
+                    classes="title",
+                ),
+                Input(placeholder="filter...", classes="filter"),
+                classes="header",
+            ),
+            self.StringsView(self.strings),
+            classes="dbedit--pane"
         )
 
-        yield self.StringsView(self.strings)
-
-        yield self.StringMetadataView(self.strings[0])
+        yield self.StringMetadataView(self.strings[0]) if self.strings else Static(Text("no strings", style=Style(color="grey50")))
 
     @on(StringsView.StringSelected)
     async def on_string_selected(self, ev) -> None:
-        await self.query_one("StringMetadataView").remove()
+        smv = self.query("StringMetadataView")
+        if smv:
+            await self.query_one("StringMetadataView").remove()
         await self.mount(self.StringMetadataView(ev.string))
 
-    @on(Input.Changed)
+    @on(Input.Changed, ".filter")
     def on_filter_changed(self, event: Input.Changed) -> None:
         event.stop()
 
         self.log("filter: " + self.filter)
         self.filter = str(event.value or "")
 
-    def watch_filter(self, filter: str) -> None:
-        if not filter:
+    def watch_filter(self) -> None:
+        if not self.filter:
             self.visible_strings = self.strings
         else:
-            self.visible_strings = [string for string in self.strings if filter in string.string]
+            self.visible_strings = [string for string in self.strings if self.filter in string.string]
         self.log(f"filtered to {len(self.visible_strings)} strings")
 
-    async def watch_visible_strings(self, visible_strings: List[OpenSourceString]) -> None:
-        if visible_strings is None:
+    async def watch_visible_strings(self) -> None:
+        if self.visible_strings is None:
             # when the reactive is initialized, this fires with the default value, None.
             # we want to skip this one event.
             return
 
-        await self.query_one("StringsView").remove()
-        smv = self.query("StringMetadataView")
-        if smv:
-            await smv.remove()
+        await replace_one(self, "StringsView", self.StringsView(self.visible_strings))
 
-        await self.mount(self.StringsView(visible_strings))
-        if visible_strings:
-            await self.mount(self.StringMetadataView(visible_strings[0]))
+        smv = self.query("StringMetadataView")
+
+        if smv:
+            if self.visible_strings:
+                await replace_one(self, "StringMetadataView", self.StringMetadataView(self.visible_strings[0]))
+            else:
+                await smv.remove()
 
     class AddButtonScreen(ModalScreen[Optional[OpenSourceString]]):  
         DEFAULT_CSS = """
@@ -450,23 +492,24 @@ class OSSDatabaseView(Widget):
         def action_close(self):
             self.dismiss(None)
 
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            if event.button.id == "add":
+        @on(Button.Pressed, "#add")
+        def on_add(self) -> None:
+            tag = self.query_one(".input-tag", Input).value
+            string = self.query_one(".input-string", Input).value
+            version = self.query_one(".input-version", Input).value or None
+            path = self.query_one(".input-path", Input).value or None
+            function = self.query_one(".input-function", Input).value or None
+            line = self.query_one(".input-line", Input).value or None
 
-                tag = self.query_one(".input-tag", Input).value
-                string = self.query_one(".input-string", Input).value
-                version = self.query_one(".input-version", Input).value or None
-                path = self.query_one(".input-path", Input).value or None
-                function = self.query_one(".input-function", Input).value or None
-                line = self.query_one(".input-line", Input).value or None
-
-                if not string:
-                    self.dismiss(None)
-
-                s = OpenSourceString(string, tag, version, path, function, line)
-                self.dismiss(s)
-            else:
+            if not string:
                 self.dismiss(None)
+
+            s = OpenSourceString(string, tag, version, path, function, line)
+            self.dismiss(s)
+
+        @on(Button.Pressed, "#cancel")
+        def on_cancel(self) -> None:
+            self.dismiss(None)
 
     class StringAdded(Message):
         def __init__(self, database: DatabaseDescriptor, string: OpenSourceString) -> None:
@@ -485,6 +528,18 @@ class OSSDatabaseView(Widget):
             self.post_message(self.StringAdded(self.descriptor, s))
 
         self.app.push_screen(self.AddButtonScreen(self.descriptor), handle_add)
+
+    class StringRemoved(Message):
+        def __init__(self, database: DatabaseDescriptor, string: OpenSourceString) -> None:
+            self.database = database
+            self.string = string
+            super().__init__()
+
+    @on(StringMetadataView.StringRemoved)
+    def on_remove_string(self, ev: StringMetadataView.StringRemoved) -> None:
+        ev.stop()
+
+        self.post_message(self.StringRemoved(self.descriptor, ev.string))
 
 
 class UnsupportedDatabaseView(Widget):
@@ -527,11 +582,30 @@ class PendingOperationsView(Widget):
         )
 
     async def render_oplist(self):
+        items = []
+        for op in self.pending_operations:
+            if op.database.type == "oss":
+
+                t = Text()
+                if op.op == "add":
+                    t.append_text(Text("+"))
+                elif op.op == "remove":
+                    t.append_text(Text("-"))
+                else:
+                    raise NotImplemented
+
+                t.append_text(Text(f" #{op.database.tag} ", style=Style(color="blue")))
+                t.append_text(Text(f"{op.string.string}"))
+
+                items.append(ListItem(Static(t)))
+            else:
+                raise NotImplemented
+
         await replace_one(
-            self, ".oplist", ListView(*[ListItem(Static(str(op))) for op in self.pending_operations], classes="oplist")
+            self, ".oplist", ListView(*items, classes="oplist")
         )
 
-    async def watch_pending_operations(self, pending_operations):
+    async def watch_pending_operations(self):
         await self.render_oplist()
 
     class Commit(Message):
@@ -697,8 +771,21 @@ class MainScreen(Screen):
         # TODO: dedup
         self.pending_operations = self.pending_operations + [op]
 
-    def watch_pending_operations(self, pending_operations):
-        self.query_one("PendingOperationsView", PendingOperationsView).pending_operations = pending_operations
+    @on(OSSDatabaseView.StringRemoved)
+    def on_oss_string_removed(self, ev):
+        metadata: OpenSourceString = ev.string
+        descriptor: DatabaseDescriptor = ev.database
+
+        assert descriptor.type == "oss"
+
+        op = DatabaseOperation(descriptor, "remove", metadata)
+        self.log("op: " + str(op))
+
+        # TODO: dedup
+        self.pending_operations = self.pending_operations + [op]
+
+    def watch_pending_operations(self):
+        self.query_one("PendingOperationsView", PendingOperationsView).pending_operations = self.pending_operations
 
     @on(PendingOperationsView.Commit)
     def on_commit(self):
