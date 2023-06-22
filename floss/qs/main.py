@@ -391,11 +391,11 @@ def check_is_code(code_offsets: Set[int], string: ExtractedString):
         if addr in code_offsets:
             return ("#code",)
 
-    # supplement code analysis with a database of junk code strings
-    junk_db = StringGlobalPrevalenceDatabase.from_file(
-        pathlib.Path(floss.qs.db.__file__).parent / "data" / "gp" / "junk-code.jsonl.gz"
-    )
-    if query_global_prevalence_database(junk_db, string.string):
+    return ()
+
+
+def query_code_string_database(db: StringGlobalPrevalenceDatabase, string: str):
+    if db.query(string):
         return ("#code-junk",)
 
     return ()
@@ -465,6 +465,16 @@ def load_databases() -> Sequence[Tagger]:
             ret.append(make_tagger(db, query_global_prevalence_hash_database))
         else:
             raise ValueError(f"unexpected database type: {type(db)}")
+
+    # supplement code analysis with a database of junk code strings
+    junk_db = StringGlobalPrevalenceDatabase.from_file(
+        pathlib.Path(floss.qs.db.__file__).parent / "data" / "gp" / "junk-code.jsonl.gz"
+    )
+    ret.append(make_tagger(junk_db, query_code_string_database))
+
+    return ()
+
+
 
     return ret
 
