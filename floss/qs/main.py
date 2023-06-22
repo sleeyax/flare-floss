@@ -472,10 +472,6 @@ def load_databases() -> Sequence[Tagger]:
     )
     ret.append(make_tagger(junk_db, query_code_string_database))
 
-    return ()
-
-
-
     return ret
 
 
