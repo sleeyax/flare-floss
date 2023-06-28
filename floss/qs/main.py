@@ -806,7 +806,7 @@ def compute_pe_layout(slice: Slice) -> Layout:
     # aka. "overlay"
     last_section: Layout = layout.children[-1]
     if last_section.end < layout.end:
-        offset = last_section.end
+        offset = last_section.end - layout.offset
         size = layout.end - last_section.end
         layout.add_child(
             SegmentLayout(
