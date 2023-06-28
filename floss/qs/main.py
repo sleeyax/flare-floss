@@ -816,15 +816,22 @@ def compute_pe_layout(slice: Slice) -> Layout:
         )
 
     # the "overlay" may contain Authenticode digital signatures
-    security = pe.OPTIONAL_HEADER.DATA_DIRECTORY[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']]
+    security = pe.OPTIONAL_HEADER.DATA_DIRECTORY[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_SECURITY"]]
     if security.VirtualAddress and security.Size - 1 > 0:
-        last_section: Layout = layout.children[-1]
-        last_section.add_child(
-            SegmentLayout(
-                slice=slice.slice(security.VirtualAddress, security.Size - 1),
-                name="Authenticode digital signature",
+        overlay: Layout = layout.children[-1]
+        if overlay.name != "overlay":
+            logger.debug("expected overlay to be present")
+            # tread with caution
+
+        if overlay.end < (security.VirtualAddress + security.Size - 1):
+            logger.debug("overlay ends before authenticode digital signature")
+        else:
+            overlay.add_child(
+                SegmentLayout(
+                    slice=slice.slice(security.VirtualAddress, security.Size - 1),
+                    name="Authenticode digital signature",
+                )
             )
-        )
 
     # add segments for any gaps between sections.
     # note that we append new items to the end of the list and then resort,
