@@ -1,6 +1,6 @@
 """
-    "textual==0.24.1",
-    "rich==13.3.5",
+    "textual==0.29.0",
+    "rich==13.4.2",
     "dissect.cstruct==3.6",
     "pefile==2023.2.7",
 
@@ -32,6 +32,7 @@ from textual.screen import Screen
 from textual.widget import Widget
 from textual.binding import Binding
 from textual.widgets import Label, Footer, Static, TabPane, TabbedContent
+from textual.widgets._tooltip import Tooltip
 from textual.geometry import Size
 from textual.reactive import reactive
 from textual.containers import Horizontal, VerticalScroll
@@ -1301,6 +1302,9 @@ class NavView(Static):
                 sibling_name = f"{sibling.section_name} section"
                 children = sibling.section_children
             elif isinstance(sibling, Footer):
+                continue
+            elif isinstance(sibling, Tooltip):
+                # textual may inject these
                 continue
             else:
                 raise ValueError("unknown sibling type: " + str(type(sibling)))
