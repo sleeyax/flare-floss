@@ -2,15 +2,14 @@
 # Copyright (C) 2017 Mandiant, Inc. All Rights Reserved.
 import os
 import sys
-import mmap
 import codecs
 import logging
 import argparse
 import textwrap
-import contextlib
 from enum import Enum
 from time import time
 from typing import Set, List, Optional
+from pathlib import Path
 
 import halo
 import viv_utils
@@ -24,18 +23,20 @@ import floss.version
 import floss.logging_
 import floss.render.json
 import floss.render.default
+import floss.language.go.extract
+import floss.language.go.coverage
 from floss.const import MEGABYTE, MAX_FILE_SIZE, MIN_STRING_LENGTH, SUPPORTED_FILE_MAGIC
 from floss.utils import (
     hex,
     get_imagebase,
     get_runtime_diff,
+    get_static_strings,
     get_vivisect_meta_info,
     is_string_type_enabled,
     set_vivisect_log_level,
 )
 from floss.render import Verbosity
 from floss.results import Analysis, Metadata, ResultDocument, load
-from floss.strings import extract_ascii_unicode_strings
 from floss.version import __version__
 from floss.identify import (
     append_unique,
@@ -46,10 +47,11 @@ from floss.identify import (
     find_decoding_function_features,
     get_functions_without_tightloops,
 )
-from floss.logging_ import DebugLevel
+from floss.logging_ import TRACE, DebugLevel
 from floss.stackstrings import extract_stackstrings
 from floss.tightstrings import extract_tightstrings
 from floss.string_decoder import decode_strings
+from floss.language.identify import Language, identify_language
 
 SIGNATURES_PATH_DEFAULT_STRING = "(embedded signatures)"
 EXTENSIONS_SHELLCODE_32 = ("sc32", "raw32")
@@ -263,7 +265,7 @@ def set_log_config(debug, quiet):
     if quiet:
         log_level = logging.WARNING
     elif debug >= DebugLevel.TRACE:
-        log_level = logging.TRACE
+        log_level = TRACE
     elif debug >= DebugLevel.DEFAULT:
         log_level = logging.DEBUG
     else:
@@ -329,13 +331,13 @@ def select_functions(vw, asked_functions: Optional[List[int]]) -> Set[int]:
     return asked_functions_
 
 
-def is_supported_file_type(sample_file_path):
+def is_supported_file_type(sample_file_path: Path):
     """
     Return if FLOSS supports the input file type, based on header bytes
     :param sample_file_path:
     :return: True if file type is supported, False otherwise
     """
-    with open(sample_file_path, "rb") as f:
+    with sample_file_path.open("rb") as f:
         magic = f.read(2)
 
     if magic in SUPPORTED_FILE_MAGIC:
@@ -344,15 +346,10 @@ def is_supported_file_type(sample_file_path):
         return False
 
 
-class Architecture(str, Enum):
-    i386 = "i386"
-    amd64 = "amd64"
-
-
 def load_vw(
-    sample_path: str,
+    sample_path: Path,
     format: str,
-    sigpaths: List[str],
+    sigpaths: List[Path],
     should_save_workspace: bool = False,
 ) -> VivWorkspace:
     if format not in ("sc32", "sc64"):
@@ -363,19 +360,19 @@ def load_vw(
             )
 
     # get shellcode type based on sample file extension
-    if format == "auto" and sample_path.endswith(EXTENSIONS_SHELLCODE_32):
+    if format == "auto" and sample_path.suffix.lower() in EXTENSIONS_SHELLCODE_32:
         format = "sc32"
-    elif format == "auto" and sample_path.endswith(EXTENSIONS_SHELLCODE_64):
+    elif format == "auto" and sample_path.suffix.lower() in EXTENSIONS_SHELLCODE_64:
         format = "sc64"
 
     if format == "sc32":
-        vw = viv_utils.getShellcodeWorkspaceFromFile(sample_path, arch="i386", analyze=False)
+        vw = viv_utils.getShellcodeWorkspaceFromFile(str(sample_path), arch="i386", analyze=False)
     elif format == "sc64":
-        vw = viv_utils.getShellcodeWorkspaceFromFile(sample_path, arch="amd64", analyze=False)
+        vw = viv_utils.getShellcodeWorkspaceFromFile(str(sample_path), arch="amd64", analyze=False)
     else:
-        vw = viv_utils.getWorkspace(sample_path, analyze=False, should_save=False)
+        vw = viv_utils.getWorkspace(str(sample_path), analyze=False, should_save=False)
 
-    viv_utils.flirt.register_flirt_signature_analyzers(vw, sigpaths)
+    viv_utils.flirt.register_flirt_signature_analyzers(vw, list(map(str, sigpaths)))
 
     vw.analyze()
 
@@ -399,7 +396,7 @@ def is_running_standalone() -> bool:
     return hasattr(sys, "frozen") and hasattr(sys, "_MEIPASS")
 
 
-def get_default_root() -> str:
+def get_default_root() -> Path:
     """
     get the file system path to the default resources directory.
     under PyInstaller, this comes from _MEIPASS.
@@ -409,35 +406,35 @@ def get_default_root() -> str:
         # pylance/mypy don't like `sys._MEIPASS` because this isn't standard.
         # its injected by pyinstaller.
         # so we'll fetch this attribute dynamically.
-        return getattr(sys, "_MEIPASS")
+        return Path(getattr(sys, "_MEIPASS"))
     else:
-        return os.path.join(os.path.dirname(__file__))
+        return Path(__file__).resolve().parent
 
 
-def get_signatures(sigs_path):
-    if not os.path.exists(sigs_path):
-        raise IOError("signatures path %s does not exist or cannot be accessed" % sigs_path)
+def get_signatures(sigs_path: Path) -> List[Path]:
+    if not sigs_path.exists():
+        raise IOError("signatures path %s does not exist or cannot be accessed" % str(sigs_path))
 
     paths = []
-    if os.path.isfile(sigs_path):
+    if sigs_path.is_file():
         paths.append(sigs_path)
-    elif os.path.isdir(sigs_path):
-        logger.debug("reading signatures from directory %s", os.path.abspath(os.path.normpath(sigs_path)))
-        for root, dirs, files in os.walk(sigs_path):
-            for file in files:
-                if file.endswith((".pat", ".pat.gz", ".sig")):
-                    sig_path = os.path.join(root, file)
+    elif sigs_path.is_dir():
+        logger.debug("reading signatures from directory %s", str(sigs_path.resolve().absolute()))
+        for item in sigs_path.iterdir():
+            if item.is_file():
+                if item.suffix in [".pat", ".pat.gz", ".sig"]:
+                    sig_path = item
                     paths.append(sig_path)
 
     # nicely normalize and format path so that debugging messages are clearer
-    paths = [os.path.abspath(os.path.normpath(path)) for path in paths]
+    paths = [path.resolve().absolute() for path in paths]
 
     # load signatures in deterministic order: the alphabetic sorting of filename.
     # this means that `0_sigs.pat` loads before `1_sigs.pat`.
-    paths = sorted(paths, key=os.path.basename)
+    paths = sorted(paths, key=lambda p: p.name)
 
     for path in paths:
-        logger.debug("found signature file: %s", path)
+        logger.debug("found signature file: %s", str(path))
 
     return paths
 
@@ -479,15 +476,15 @@ def main(argv=None) -> int:
             )
             logger.debug("-" * 80)
 
-            sigs_path = os.path.join(get_default_root(), "sigs")
+            sigs_path = get_default_root() / "sigs"
         else:
-            sigs_path = args.signatures
-            logger.debug("using signatures path: %s", sigs_path)
+            sigs_path = Path(args.signatures)
+            logger.debug("using signatures path: %s", str(sigs_path))
 
         args.signatures = sigs_path
 
     # alternatively: pass buffer along instead of file path, also should work for stdin
-    sample = args.sample.name
+    sample = Path(args.sample.name)
     args.sample.close()
 
     if args.functions:
@@ -521,14 +518,53 @@ def main(argv=None) -> int:
 
         return 0
 
-    results = ResultDocument(metadata=Metadata(file_path=sample, min_length=args.min_length), analysis=analysis)
+    results = ResultDocument(metadata=Metadata(file_path=str(sample), min_length=args.min_length), analysis=analysis)
 
+    sample_size = sample.stat().st_size
+    if sample_size > sys.maxsize:
+        logger.warning("file is very large, strings listings may be truncated")
+
+    # always extract static strings, it's fast and we use them for language identification
+    # can throw away result later if not desired in output
     time0 = time()
     interim = time0
-    sample_size = os.path.getsize(sample)
+    static_strings = get_static_strings(sample, args.min_length)
+    static_runtime = get_runtime_diff(interim)
+
+    lang_id = identify_language(sample, static_strings)
+
+    # set language configurations
+    if lang_id == Language.GO:
+        results.metadata.language = Language.GO.value
+
+        if args.enabled_types == [] and args.disabled_types == []:
+            prompt = input("Do you want to enable string deobfuscation? (this could take a long time) [y/N] ")
+
+            if prompt == "y" or prompt == "Y":
+                logger.info("enabled string deobfuscation")
+                analysis.enable_stack_strings = True
+                analysis.enable_tight_strings = True
+                analysis.enable_decoded_strings = True
+
+            else:
+                logger.info("disabled string deobfuscation")
+                analysis.enable_stack_strings = False
+                analysis.enable_tight_strings = False
+                analysis.enable_decoded_strings = False
+
+    elif lang_id == Language.DOTNET:
+        logger.warning(".NET language-specific string extraction is not supported")
+        logger.warning(" will NOT deobfuscate any .NET strings")
+
+        results.metadata.language = Language.DOTNET.value
+
+        # TODO for pure .NET binaries our deobfuscation algorithms do nothing, but for mixed-mode assemblies they may
+        analysis.enable_stack_strings = False
+        analysis.enable_tight_strings = False
+        analysis.enable_decoded_strings = False
 
     # in order of expected run time, fast to slow
-    # 1. static strings
+    # 1. static strings (done above)
     # 2. stack strings
     # 3. tight strings
     # 4. decoded strings
@@ -536,17 +572,20 @@ def main(argv=None) -> int:
     if results.analysis.enable_static_strings:
         logger.info("extracting static strings...")
 
-        if sample_size > sys.maxsize:
-            logger.warning("file is very large, strings listings may be truncated.")
-
-        with open(sample, "rb") as f:
-            with contextlib.closing(mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)) as buf:
-                static_strings = list(extract_ascii_unicode_strings(buf, args.min_length))
-
         results.strings.static_strings = static_strings
-        results.metadata.runtime.static_strings = get_runtime_diff(interim)
-        interim = time()
+        results.metadata.runtime.static_strings = static_runtime
 
+        if lang_id:
+            if lang_id == Language.GO:
+                logger.info("applying language-specific Go string extraction")
+
+                interim = time()
+                results.strings.language_strings = floss.language.go.extract.extract_go_strings(sample, args.min_length)
+                results.metadata.runtime.language_strings = get_runtime_diff(interim)
+
+                results.strings.language_strings_missed = floss.language.go.coverage.get_missed_strings(
+                    static_strings, results.strings.language_strings, args.min_length
+                )
     if (
         results.analysis.enable_decoded_strings
         or results.analysis.enable_stack_strings
@@ -575,6 +614,7 @@ def main(argv=None) -> int:
                 stream=sys.stderr,
                 enabled=not (args.quiet or args.disable_progress),
             ):
+                interim = time()
                 vw = load_vw(sample, args.format, sigpaths, should_save_workspace)
                 results.metadata.runtime.vivisect = get_runtime_diff(interim)
                 interim = time()

@@ -4,7 +4,7 @@ import io
 import sys
 import textwrap
 import collections
-from typing import List, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 from rich import box
 from rich.table import Table
@@ -13,6 +13,7 @@ from rich.console import Console
 
 import floss.utils as util
 import floss.logging_
+import floss.language.identify
 from floss.render import Verbosity
 from floss.results import AddressType, StackString, TightString, DecodedString, ResultDocument, StringEncoding
 from floss.render.sanitize import sanitize
@@ -25,13 +26,13 @@ DISABLED = "Disabled"
 logger = floss.logging_.getLogger(__name__)
 
 
-def heading_style(str):
-    colored_string = "[cyan]" + str + "[/cyan]"
+def heading_style(s: str):
+    colored_string = "[cyan]" + escape(s) + "[/cyan]"
     return colored_string
 
 
-def string_style(str):
-    colored_string = "[green]" + str + " [/green]"
+def string_style(s: str):
+    colored_string = "[green]" + escape(s) + " [/green]"
     return colored_string
 
 
@@ -54,6 +55,7 @@ def render_meta(results: ResultDocument, console, verbose):
                 ("start date", results.metadata.runtime.start_date.strftime("%Y-%m-%d %H:%M:%S")),
                 ("runtime", strtime(results.metadata.runtime.total)),
                 ("version", results.metadata.version),
+                ("identified language", results.metadata.language),
                 ("imagebase", f"0x{results.metadata.imagebase:x}"),
                 ("min string length", f"{results.metadata.min_length}"),
             ]
@@ -71,10 +73,22 @@ def render_meta(results: ResultDocument, console, verbose):
 
 
 def render_string_type_rows(results: ResultDocument) -> List[Tuple[str, str]]:
+    len_ss = len(results.strings.static_strings)
+    len_ls = len(results.strings.language_strings)
+    len_chars_ss = sum([len(s.string) for s in results.strings.static_strings])
+    len_chars_ls = sum([len(s.string) for s in results.strings.language_strings])
     return [
         (
             " static strings",
-            str(len(results.strings.static_strings)) if results.analysis.enable_static_strings else DISABLED,
+            f"{len_ss:>{len(str(len_ss))}} ({len_chars_ss:>{len(str(len_chars_ss))}d} characters)"
+            if results.analysis.enable_static_strings
+            else DISABLED,
+        ),
+        (
+            "  language strings",
+            f"{len_ls:>{len(str(len_ss))}} ({len_chars_ls:>{len(str(len_chars_ss))}d} characters)"
+            if results.metadata.language
+            else DISABLED,
         ),
         (
             " stack strings",
@@ -129,15 +143,27 @@ def strtime(seconds):
     return f"{m:02.0f}:{s:02.0f}"
 
 
+def render_gostrings(language_strings, language_strings_missed, console, verbose, disable_headers):
+    strings = sorted(language_strings + language_strings_missed, key=lambda s: s.offset)
+    render_heading("FLOSS GO STRINGS", len(strings), console, verbose, disable_headers)
+    for s in strings:
+        if verbose == Verbosity.DEFAULT:
+            console.print(sanitize(s.string, is_ascii_only=False), markup=False)
+        else:
+            colored_string = string_style(sanitize(s.string, is_ascii_only=False))
+            console.print(f"0x{s.offset:>08x} {colored_string}")
+    console.print("\n")
+
+
 def render_static_substrings(strings, encoding, offset_len, console, verbose, disable_headers):
     if verbose != Verbosity.DEFAULT:
         encoding = heading_style(encoding)
     render_sub_heading(f"FLOSS STATIC STRINGS: {encoding}", len(strings), console, disable_headers)
     for s in strings:
         if verbose == Verbosity.DEFAULT:
-            console.print(s.string)
+            console.print(sanitize(s.string), markup=False)
         else:
-            colored_string = string_style(s.string)
+            colored_string = string_style(sanitize(s.string))
             console.print(f"0x{s.offset:>0{offset_len}x} {colored_string}")
     console.print("\n")
 
@@ -165,7 +191,7 @@ def render_stackstrings(
 ):
     if verbose == Verbosity.DEFAULT:
         for s in strings:
-            console.print(sanitize(s.string))
+            console.print(sanitize(s.string), markup=False)
     else:
         if strings:
             table = Table(
@@ -194,9 +220,9 @@ def render_decoded_strings(decoded_strings: List[DecodedString], console, verbos
     """
     if verbose == Verbosity.DEFAULT:
         for ds in decoded_strings:
-            console.print(sanitize(ds.string))
+            console.print(sanitize(ds.string), markup=False)
     else:
-        strings_by_functions = collections.defaultdict(list)
+        strings_by_functions: Dict[int, list] = collections.defaultdict(list)
         for ds in decoded_strings:
             strings_by_functions[ds.decoding_routine].append(ds)
 
@@ -210,7 +236,7 @@ def render_decoded_strings(decoded_strings: List[DecodedString], console, verbos
                     offset_string = escape("[heap]")
                 else:
                     offset_string = hex(ds.address or 0)
-                rows.append((offset_string, hex(ds.decoded_at), string_style(ds.string)))
+                rows.append((offset_string, hex(ds.decoded_at), string_style(sanitize(ds.string))))
 
             if rows:
                 table = Table(
@@ -273,8 +299,8 @@ def get_color(color):
     return color_system
 
 
-def render(results, verbose, disable_headers, color):
-    sys.stdout.reconfigure(encoding="utf-8")
+def render(results: floss.results.ResultDocument, verbose, disable_headers, color):
+    sys.__stdout__.reconfigure(encoding="utf-8")
     console = Console(file=io.StringIO(), color_system=get_color(color), highlight=False)
 
     if not disable_headers:
@@ -287,7 +313,13 @@ def render(results, verbose, disable_headers, color):
         render_meta(results, console, verbose)
         console.print("\n")
 
-    if results.analysis.enable_static_strings:
+    if results.metadata.language == floss.language.identify.Language.GO.value:
+        render_gostrings(
+            results.strings.language_strings, results.strings.language_strings_missed, console, verbose, disable_headers
+        )
+        console.print("\n")
+
+    elif results.analysis.enable_static_strings:
         render_staticstrings(results.strings.static_strings, console, verbose, disable_headers)
         console.print("\n")
 
@@ -305,4 +337,5 @@ def render(results, verbose, disable_headers, color):
         render_heading("FLOSS DECODED STRINGS", len(results.strings.decoded_strings), console, verbose, disable_headers)
         render_decoded_strings(results.strings.decoded_strings, console, verbose, disable_headers)
 
-    return console.file.getvalue()
+    console.file.seek(0)
+    return console.file.read()

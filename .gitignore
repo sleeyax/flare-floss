@@ -27,3 +27,6 @@ flare_floss.egg-info
 .eggs
 .direnv
 .envrc
+
+# vscode
+.vscode

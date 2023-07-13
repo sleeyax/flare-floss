@@ -12,6 +12,7 @@ import os
 import time
 import logging
 from typing import List, Union
+from pathlib import Path
 
 import idc
 import viv_utils
@@ -56,7 +57,7 @@ def append_comment(ea: int, s: str, repeatable: bool = False) -> None:
     else:
         if s in cmt:  # ignore duplicates
             return
-        cmt = cmt + "\\n" + s
+        cmt = cmt + "\n" + s
 
     if repeatable:
         idc.set_cmt(ea, cmt, True)
@@ -97,7 +98,7 @@ def append_lvar_comment(fva: int, frame_offset: int, s: str, repeatable: bool = 
     else:
         if s in string:  # ignore duplicates
             return
-        string = string + "\\n" + s
+        string = string + "\n" + s
 
     if not idc.set_member_cmt(stack, lvar_offset, string, repeatable):
         raise RuntimeError("failed to set comment: 0x%08x 0x%08x 0x%08x: %s" % (fva, stack, lvar_offset, s))
@@ -117,12 +118,13 @@ def apply_decoded_strings(decoded_strings: List[DecodedString]) -> None:
 
 
 def apply_stack_strings(
-    strings: List[Union[StackString, TightString]], lvar_cmt: bool = True, cmt: bool = True
+    stack_strings: List[StackString], tight_strings: List[TightString], lvar_cmt: bool = True, cmt: bool = True
 ) -> None:
     """
     lvar_cmt: apply stack variable comment
     cmt: apply regular comment
     """
+    strings = stack_strings + tight_strings
     for s in strings:
         if not s.string:
             continue
@@ -153,12 +155,12 @@ def main(argv=None):
     logging.getLogger().setLevel(logging.INFO)
     ignore_floss_logs()
 
-    idb_path = idc.get_idb_path()
-    fpath, _ = os.path.splitext(idb_path)
-    viv_path = fpath + ".viv"
-    if os.path.exists(viv_path):
-        logger.info("loading vivisect workspace from %r", viv_path)
-        vw = viv_utils.getWorkspace(viv_path)
+    idb_path = Path(idc.get_idb_path())
+    fpath = idb_path.with_suffix("")
+    viv_path = fpath.with_suffix(".viv")
+    if viv_path.exists():
+        logger.info("loading vivisect workspace from %r", str(viv_path))
+        vw = viv_utils.getWorkspace(str(viv_path))
     else:
         logger.info("loading vivisect workspace from IDB...")
         vw = viv_utils.loadWorkspaceFromIdb()
@@ -179,7 +181,6 @@ def main(argv=None):
         vw, selected_functions, MIN_LENGTH, verbosity=floss.render.Verbosity.VERBOSE, disable_progress=True
     )
     logger.info("decoded %d stack strings", len(stack_strings))
-    apply_stack_strings(stack_strings)
 
     logger.info("extracting tightstrings...")
     tightloop_functions = floss.identify.get_functions_with_tightloops(decoding_function_features)
@@ -191,7 +192,8 @@ def main(argv=None):
         disable_progress=True,
     )
     logger.info("decoded %d tight strings", len(tight_strings))
-    apply_stack_strings(tight_strings)
+
+    apply_stack_strings(stack_strings, tight_strings)
 
     logger.info("decoding strings...")
 

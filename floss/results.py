@@ -4,6 +4,7 @@ import json
 import datetime
 from enum import Enum
 from typing import Dict, List
+from pathlib import Path
 from dataclasses import field
 
 # we use pydantic for dataclasses so that we can
@@ -35,6 +36,7 @@ class InvalidLoadConfig(Exception):
 class StringEncoding(str, Enum):
     ASCII = "ASCII"
     UTF16LE = "UTF-16LE"
+    UTF8 = "UTF-8"
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,7 @@ class StackString:
     Attributes:
       function: the address of the function from which the stackstring was extracted
       string: the extracted string
+      encoding: string encoding
       program_counter: the program counter at the moment the string was extracted
       stack_pointer: the stack counter at the moment the string was extracted
       original_stack_pointer: the initial stack counter when the function was entered
@@ -129,6 +132,19 @@ class StaticString:
     offset: int
     encoding: StringEncoding
 
+    @classmethod
+    def from_utf8(cls, buf, addr, min_length):
+        try:
+            decoded_string = buf.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError("not utf-8")
+
+        if not decoded_string.isprintable():
+            raise ValueError("not printable")
+        if len(decoded_string) < min_length:
+            raise ValueError("too short")
+        return cls(string=decoded_string, offset=addr, encoding=StringEncoding.UTF8)
+
 
 @dataclass
 class Runtime:
@@ -137,6 +153,7 @@ class Runtime:
     vivisect: float = 0
     find_features: float = 0
     static_strings: float = 0
+    language_strings: float = 0
     stack_strings: float = 0
     decoded_strings: float = 0
     tight_strings: float = 0
@@ -171,6 +188,7 @@ class Metadata:
     imagebase: int = 0
     min_length: int = 0
     runtime: Runtime = field(default_factory=Runtime)
+    language: str = ""
 
 
 @dataclass
@@ -179,6 +197,8 @@ class Strings:
     tight_strings: List[TightString] = field(default_factory=list)
     decoded_strings: List[DecodedString] = field(default_factory=list)
     static_strings: List[StaticString] = field(default_factory=list)
+    language_strings: List[StaticString] = field(default_factory=list)
+    language_strings_missed: List[StaticString] = field(default_factory=list)
 
 
 @dataclass
@@ -189,7 +209,8 @@ class ResultDocument:
 
     @classmethod
     def parse_file(cls, path):
-        return cls.__pydantic_model__.parse_file(path)
+        # We're ignoring the following mypy error since this field is guaranteed by the Pydantic dataclass.
+        return cls.__pydantic_model__.parse_file(path)  # type: ignore
 
 
 def log_result(decoded_string, verbosity):
@@ -217,8 +238,8 @@ def log_result(decoded_string, verbosity):
             ValueError("unknown decoded or extracted string type: %s", type(decoded_string))
 
 
-def load(sample: str, analysis: Analysis, functions: List[int], min_length: int) -> ResultDocument:
-    logger.debug("loading results document: %s", sample)
+def load(sample: Path, analysis: Analysis, functions: List[int], min_length: int) -> ResultDocument:
+    logger.debug("loading results document: %s", str(sample))
     results = read(sample)
     results.metadata.file_path = f"{sample}\n{results.metadata.file_path}"
     check_set_string_types(results, analysis)
@@ -230,9 +251,9 @@ def load(sample: str, analysis: Analysis, functions: List[int], min_length: int)
     return results
 
 
-def read(sample: str) -> ResultDocument:
+def read(sample: Path) -> ResultDocument:
     try:
-        with open(sample, "rb") as f:
+        with sample.open("rb") as f:
             results = json.loads(f.read().decode("utf-8"))
     except (json.decoder.JSONDecodeError, UnicodeDecodeError) as e:
         raise InvalidResultsFile(f"{e}")
@@ -240,7 +261,7 @@ def read(sample: str) -> ResultDocument:
     try:
         results = ResultDocument(**results)
     except (TypeError, ValidationError) as e:
-        raise InvalidResultsFile(f"{sample} is not a valid FLOSS result document: {e}")
+        raise InvalidResultsFile(f"{str(sample)} is not a valid FLOSS result document: {e}")
 
     return results
 
