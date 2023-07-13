@@ -1231,10 +1231,16 @@ class ExportsView(Static):
                 except UnicodeDecodeError:
                     symbol_name = "(invalid)"
 
-                t.append("    ")
-                t.append(symbol_name)
-                t.append("\n")
-
+                if entry.forwarder is None:
+                    t.append("    ")
+                    t.append(symbol_name)
+                    t.append("\n")
+                else:
+                    t.append("    ")
+                    t.append(symbol_name)
+                    t.append(" -> ", style=style_decoration)
+                    t.append(entry.forwarder.partition(b"\x00")[0].decode("ascii"))
+                    t.append("\n")
         return t
 
 
